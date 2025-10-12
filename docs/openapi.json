@@ -1,0 +1,573 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "LumeScope API",
+    "version": "v1",
+    "description": "LumeScope API provides access to Lumera blockchain action data, supernode metrics, \nand version compatibility information. This API enables monitoring and analysis of \nthe Lumera network's distributed storage operations.\n"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local development server"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "summary": "Health check endpoint",
+        "description": "Liveness probe that indicates if the process is alive and able to serve HTTP requests",
+        "operationId": "getHealthz",
+        "tags": [
+          "Health"
+        ],
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "ok"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "summary": "Readiness check endpoint",
+        "description": "Readiness probe that indicates if the service is ready to accept traffic",
+        "operationId": "getReadyz",
+        "tags": [
+          "Health"
+        ],
+        "responses": {
+          "200": {
+            "description": "Service is ready",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ready"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/actions": {
+      "get": {
+        "summary": "List actions",
+        "description": "Retrieve a paginated list of blockchain actions with optional filtering",
+        "operationId": "listActions",
+        "tags": [
+          "Actions"
+        ],
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "description": "Filter by action type (e.g., cascade, transfer)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "creator",
+            "in": "query",
+            "description": "Filter by creator address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Filter by action state (e.g., committed)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Filter actions from timestamp",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Filter actions to timestamp",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of items to return (1-200)",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Pagination cursor for next page",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionsListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/actions/{id}": {
+      "get": {
+        "summary": "Get action details",
+        "description": "Retrieve detailed information about a specific action by ID",
+        "operationId": "getAction",
+        "tags": [
+          "Actions"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Action ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Action not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/supernodes/metrics": {
+      "get": {
+        "summary": "Get supernode metrics",
+        "description": "Retrieve current metrics for all supernodes including availability, RTT, and queue depth",
+        "operationId": "getSupernodeMetrics",
+        "tags": [
+          "Supernodes"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupernodeMetricsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/version-matrix": {
+      "get": {
+        "summary": "Get version compatibility matrix",
+        "description": "Retrieve information about chain action versions, supernode capabilities, and compatibility",
+        "operationId": "getVersionMatrix",
+        "tags": [
+          "Version"
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionMatrixResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActionsListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActionItem"
+            }
+          },
+          "next_cursor": {
+            "type": "string",
+            "description": "Cursor for fetching the next page"
+          },
+          "schema_version": {
+            "type": "string",
+            "example": "v1.0"
+          }
+        }
+      },
+      "ActionItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique action identifier",
+            "example": "act_1"
+          },
+          "type": {
+            "type": "string",
+            "description": "Action type (e.g., cascade, transfer)",
+            "example": "cascade"
+          },
+          "creator": {
+            "type": "string",
+            "description": "Creator address",
+            "example": "lumera1example..."
+          },
+          "state": {
+            "type": "string",
+            "description": "Current action state",
+            "example": "committed"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Action timestamp"
+          },
+          "decoded": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Decoded action data"
+          },
+          "raw": {
+            "type": "string",
+            "description": "Base64 encoded raw bytes for unknown types"
+          }
+        }
+      },
+      "ActionDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique action identifier"
+          },
+          "type": {
+            "type": "string",
+            "description": "Action type",
+            "example": "cascade"
+          },
+          "creator": {
+            "type": "string",
+            "description": "Creator address"
+          },
+          "state": {
+            "type": "string",
+            "description": "Current action state",
+            "example": "committed"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Action timestamp"
+          },
+          "decoded": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Decoded action data"
+          },
+          "cascade_layout": {
+            "$ref": "#/components/schemas/CascadeLEP1"
+          },
+          "schema_version": {
+            "type": "string",
+            "example": "v1.0"
+          }
+        }
+      },
+      "CascadeLEP1": {
+        "type": "object",
+        "description": "Cascade layout information for LEP1",
+        "properties": {
+          "root_cid": {
+            "type": "string",
+            "description": "Root CID of the cascade",
+            "example": "bafy..."
+          },
+          "piece_count": {
+            "type": "integer",
+            "description": "Number of pieces in the cascade",
+            "example": 12
+          },
+          "total_size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total size in bytes",
+            "example": 1048576
+          },
+          "preview_mime": {
+            "type": "string",
+            "description": "MIME type for preview",
+            "example": "image/png"
+          }
+        }
+      },
+      "SupernodeMetricsResponse": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SupernodeMetric"
+            }
+          },
+          "rollup": {
+            "$ref": "#/components/schemas/MetricsRollup"
+          },
+          "schema_version": {
+            "type": "string",
+            "example": "v1.0"
+          }
+        }
+      },
+      "SupernodeMetric": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "Supernode identifier",
+            "example": "sn-1"
+          },
+          "address": {
+            "type": "string",
+            "description": "Supernode address URL",
+            "example": "https://sn1.example.com"
+          },
+          "last_scrape": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last time metrics were scraped"
+          },
+          "availability": {
+            "type": "number",
+            "format": "float",
+            "description": "Availability percentage (0.0-1.0)",
+            "example": 1.0
+          },
+          "rtt_ms": {
+            "type": "integer",
+            "description": "Round-trip time in milliseconds",
+            "example": 120
+          },
+          "queue_depth": {
+            "type": "integer",
+            "description": "Current queue depth",
+            "example": 2
+          },
+          "last_status": {
+            "type": "string",
+            "description": "Last status check result",
+            "example": "ok"
+          }
+        }
+      },
+      "MetricsRollup": {
+        "type": "object",
+        "properties": {
+          "sampled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When metrics were sampled"
+          },
+          "node_count": {
+            "type": "integer",
+            "description": "Total number of nodes",
+            "example": 2
+          },
+          "available_pct": {
+            "type": "number",
+            "format": "float",
+            "description": "Overall availability percentage",
+            "example": 99.0
+          },
+          "avg_rtt_ms": {
+            "type": "integer",
+            "description": "Average RTT across all nodes",
+            "example": 140
+          }
+        }
+      },
+      "VersionMatrixResponse": {
+        "type": "object",
+        "properties": {
+          "chain_action_versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChainActionVersion"
+            }
+          },
+          "supernodes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SupernodeCapability"
+            }
+          },
+          "compatibility": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Compatibility"
+            }
+          },
+          "schema_version": {
+            "type": "string",
+            "example": "v1.0"
+          }
+        }
+      },
+      "ChainActionVersion": {
+        "type": "object",
+        "properties": {
+          "action_type": {
+            "type": "string",
+            "description": "Type of chain action",
+            "example": "cascade"
+          },
+          "version": {
+            "type": "integer",
+            "description": "Version number",
+            "example": 1
+          }
+        }
+      },
+      "SupernodeCapability": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "Supernode identifier",
+            "example": "sn-1"
+          },
+          "version": {
+            "type": "string",
+            "description": "Supernode software version",
+            "example": "v2.3.0"
+          },
+          "supports": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "description": "Supported LEPs (Lumera Enhancement Proposals)",
+            "example": {
+              "LEP1": true,
+              "LEP2": true
+            }
+          }
+        }
+      },
+      "Compatibility": {
+        "type": "object",
+        "properties": {
+          "node_id": {
+            "type": "string",
+            "description": "Supernode identifier"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "full",
+              "partial",
+              "incompatible"
+            ],
+            "description": "Compatibility verdict",
+            "example": "full"
+          },
+          "rationale": {
+            "type": "string",
+            "description": "Explanation of the verdict",
+            "example": "All required capabilities present"
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Error message",
+            "example": "not_found"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Health and readiness endpoints"
+    },
+    {
+      "name": "Actions",
+      "description": "Blockchain action operations"
+    },
+    {
+      "name": "Supernodes",
+      "description": "Supernode metrics and monitoring"
+    },
+    {
+      "name": "Version",
+      "description": "Version and compatibility information"
+    }
+  ]
+}

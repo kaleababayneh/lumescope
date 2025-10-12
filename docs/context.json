@@ -1,0 +1,204 @@
+{
+  "project": "LumeScope (Lumera InfoServer)",
+  "as_built_summary": {
+    "endpoints": [
+      {
+        "path": "/healthz",
+        "status": "implemented",
+        "evidence": ["internal/handlers/health.go:22-28", "internal/server/router.go:18"]
+      },
+      {
+        "path": "/readyz",
+        "status": "implemented",
+        "evidence": ["internal/handlers/health.go:48-57", "internal/server/router.go:19"]
+      },
+      {
+        "path": "/v1/actions",
+        "status": "partial",
+        "evidence": ["internal/handlers/actions.go:28-72", "internal/server/router.go:33-43"],
+        "notes": "Handler implemented with stub data; pagination, filters, and ETag support present but not wired to database queries. Background sync populates DB but API returns mock data."
+      },
+      {
+        "path": "/v1/actions/{id}",
+        "status": "partial",
+        "evidence": ["internal/handlers/actions.go:74-117", "internal/server/router.go:46-58"],
+        "notes": "Handler implemented with stub data structure including CascadeLayout placeholder. Not connected to database; no actual LEP1 resolution implemented."
+      },
+      {
+        "path": "/v1/supernodes/metrics",
+        "status": "partial",
+        "evidence": ["internal/handlers/supernodes.go:33-71", "internal/server/router.go:60-66"],
+        "notes": "Handler implemented with stub rollup data. Background probes collect real metrics into DB, but API handler returns mock aggregations."
+      },
+      {
+        "path": "/v1/version-matrix",
+        "status": "partial",
+        "evidence": ["internal/handlers/version.go:42-62", "internal/server/router.go:68-74"],
+        "notes": "Handler implemented with stub compatibility verdicts. No actual LEP2 capability detection or version matrix computation from real supernode data."
+      }
+    ],
+    "background_processes": [
+      {
+        "name": "scheduler",
+        "status": "implemented",
+        "evidence": ["internal/background/scheduler.go:32-41"],
+        "loops": [
+          {
+            "name": "validators sync",
+            "status": "implemented",
+            "evidence": ["internal/background/scheduler.go:43-56", "internal/background/scheduler.go:104-127"],
+            "notes": "Fetches validators from Lumera LCD, caches monikers for supernode join"
+          },
+          {
+            "name": "supernodes sync",
+            "status": "implemented",
+            "evidence": ["internal/background/scheduler.go:58-71", "internal/background/scheduler.go:137-174"],
+            "notes": "Fetches supernodes list, joins validator monikers, persists to DB with state history"
+          },
+          {
+            "name": "actions sync",
+            "status": "implemented",
+            "evidence": ["internal/background/scheduler.go:73-86", "internal/background/scheduler.go:176-223"],
+            "notes": "Fetches actions, decodes metadata using protobuf codecs, upserts to DB"
+          },
+          {
+            "name": "supernode probes",
+            "status": "implemented",
+            "evidence": ["internal/background/scheduler.go:88-101", "internal/background/scheduler.go:225-312"],
+            "notes": "TCP port checks (4444, 4445) and status API fetch (port 8002), persists metrics to DB"
+          }
+        ]
+      }
+    ],
+    "decoders": {
+      "modules": ["internal/decoder/actionmeta.go"],
+      "coverage_summary": "Supports ACTION_TYPE_CASCADE and ACTION_TYPE_SENSE with protobuf decode to JSON. Falls back to raw bytes for unknown types.",
+      "evidence": ["internal/decoder/actionmeta.go:14-41"],
+      "supported_types": ["ACTION_TYPE_CASCADE", "ACTION_TYPE_SENSE"],
+      "notes": "Uses github.com/LumeraProtocol/lumera/x/action/v1/types for protobuf definitions"
+    },
+    "data_access": {
+      "db_layer": "present",
+      "key_files": ["internal/db/db.go:1-292"],
+      "operations": [
+        {
+          "name": "Bootstrap",
+          "evidence": ["internal/db/db.go:46-106"],
+          "notes": "Creates supernodes and actions tables with indexes on startup"
+        },
+        {
+          "name": "UpsertSupernode",
+          "evidence": ["internal/db/db.go:109-133"],
+          "notes": "Inserts or updates supernode with state, IP, protocol version, metrics"
+        },
+        {
+          "name": "UpsertAction",
+          "evidence": ["internal/db/db.go:180-198"],
+          "notes": "Inserts or updates action with decoded metadata JSON"
+        },
+        {
+          "name": "UpdateSupernodeProbeData",
+          "evidence": ["internal/db/db.go:137-177"],
+          "notes": "Updates probe results: version, CPU, memory, storage, uptime, status API availability"
+        },
+        {
+          "name": "ListKnownSupernodes",
+          "evidence": ["internal/db/db.go:201-216"],
+          "notes": "Returns probe targets for scheduler"
+        }
+      ],
+      "notes": "PostgreSQL via pgx driver. Schema includes JSONB fields for flexible metadata storage. API handlers NOT YET wired to DB queries."
+    },
+    "integration": {
+      "lumera_client": "present",
+      "key_files": ["internal/lumera/client.go:1-226"],
+      "methods": [
+        {
+          "name": "GetValidators",
+          "evidence": ["internal/lumera/client.go:74-91"],
+          "endpoint": "/cosmos/staking/v1beta1/validators"
+        },
+        {
+          "name": "GetSupernodes",
+          "evidence": ["internal/lumera/client.go:143-160"],
+          "endpoint": "/LumeraProtocol/lumera/supernode/list_super_nodes"
+        },
+        {
+          "name": "GetActions",
+          "evidence": ["internal/lumera/client.go:185-212"],
+          "endpoint": "/LumeraProtocol/lumera/action/list_actions"
+        }
+      ],
+      "notes": "Stdlib-only HTTP client with pagination support. Configured via LUMERA_API_BASE env var."
+    },
+    "build_run": {
+      "binary": "present",
+      "binary_path": "bin/lumescope",
+      "evidence": ["bin/lumescope (binary file)"],
+      "docs": ["README.md:1-188", ".env.example"],
+      "build_command": "go build -o bin/lumescope ./cmd/lumescope",
+      "run_command": "./bin/lumescope",
+      "notes": "Requires PostgreSQL 13+, Go 1.24+. Auto-bootstraps DB schema on startup."
+    }
+  },
+  "feature_status": {
+    "GET /v1/actions": {
+      "status": "partial",
+      "notes": "Endpoint exists and returns JSON with pagination structure, ETag/Last-Modified headers. However, returns stub data; not connected to database queries. Background sync DOES populate actions table with decoded metadata.",
+      "evidence": ["internal/handlers/actions.go:28-72", "internal/background/scheduler.go:176-223", "internal/db/db.go:180-198"],
+      "missing": ["Wire handler to DB queries", "Implement filters (type, creator, state, time range)", "Real ETag/Last-Modified from DB timestamps", "Stable sort for pagination"]
+    },
+    "GET /v1/actions/{id}": {
+      "status": "partial",
+      "notes": "Endpoint exists with joined view structure including CascadeLayout. Returns stub data; no actual LEP1 resolver implemented. Background sync stores actions but no Cascade resolution logic exists.",
+      "evidence": ["internal/handlers/actions.go:74-117", "internal/background/scheduler.go:176-223"],
+      "missing": ["Wire handler to DB query by actionID", "Implement LEP1 Cascade layout resolver", "Fetch and attach file descriptors (sizes, MIME, piece counts)", "Real schema version tracking"]
+    },
+    "GET /v1/supernodes/metrics": {
+      "status": "partial",
+      "notes": "Endpoint exists with rollup structure. Returns stub aggregations. Background probes collect real metrics (CPU, memory, storage, ports, status API) into DB but API handler does not aggregate from DB.",
+      "evidence": ["internal/handlers/supernodes.go:33-71", "internal/background/scheduler.go:225-312", "internal/db/db.go:137-177"],
+      "missing": ["Wire handler to DB aggregation queries", "Real-time rollups (availability, RTT, queue depth)", "Per-node freshness timestamps from lastStatusCheck", "Cache strategy with <400ms p95 target"]
+    },
+    "GET /v1/version-matrix": {
+      "status": "partial",
+      "notes": "Endpoint exists with compatibility verdict structure. Returns stub data. No capability detection or version matrix computation logic exists. Background sync could theoretically extract versions from supernodes but no analysis is performed.",
+      "evidence": ["internal/handlers/version.go:42-62"],
+      "missing": ["Extract action_versions from chain state", "Parse supernode protocol versions and capabilities from notes/metrics", "Compute compatibility verdicts (full/partial/incompatible)", "Rationale generation for each verdict"]
+    }
+  },
+  "next_steps": [
+    "Wire API handlers to database queries (Priority: CRITICAL)",
+    "Implement /v1/actions list endpoint with DB query, filters (type, creator, state, time), pagination, and ETag support",
+    "Implement /v1/actions/{id} detail endpoint with DB query by actionID",
+    "Implement /v1/supernodes/metrics aggregation from DB with rollups (availability, RTT, queue depth)",
+    "Implement /v1/version-matrix with real chain action versions and supernode capability detection",
+    "Add LEP1 Cascade resolver for joined Action detail view (file descriptors, sizes, MIME types)",
+    "Implement ETag/Last-Modified based on actual DB timestamps for caching",
+    "Add comprehensive error handling and validation to API handlers",
+    "Add integration tests for API endpoints against seeded DB",
+    "Add Prometheus metrics endpoint (currently stubbed)",
+    "Create Helm chart and Docker packaging for deployment"
+  ],
+  "gap_analysis": {
+    "critical_gaps": [
+      "API handlers return stub data; not connected to database despite background sync populating tables",
+      "LEP1 Cascade layout resolver not implemented (required for /v1/actions/{id})",
+      "LEP2 version matrix and compatibility logic not implemented",
+      "No aggregation queries for supernode metrics rollups"
+    ],
+    "moderate_gaps": [
+      "Filters on /v1/actions (type, creator, state, time range) accepted but not applied",
+      "ETag/Last-Modified headers present but not based on real DB timestamps",
+      "Pagination cursor logic exists but not connected to DB offset/keyset pagination",
+      "No caching strategy (Redis) despite being mentioned in requirements"
+    ],
+    "minor_gaps": [
+      "Prometheus metrics endpoint stubbed (no actual metrics exposed)",
+      "No rate limiting implemented (mentioned in requirements)",
+      "No historical backfill or reorg-tolerant cursoring (extended feature)",
+      "No GraphQL facade (extended feature)"
+    ]
+  },
+  "last_updated": "2025-10-12T04:24:00Z"
+}

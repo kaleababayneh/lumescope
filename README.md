@@ -61,7 +61,16 @@ The server bootstraps DB tables automatically on first start.
 
 
 ## Configuration
-All settings are provided via environment variables. Defaults are shown in parentheses.
+Configuration can be provided via environment variables or by creating a `.env` file in the project root. The `.env` file is loaded automatically if present.
+
+To get started, copy the example file:
+
+```bash
+cp .env.example .env
+# Then edit .env with your settings
+```
+
+All settings are shown below with their defaults in parentheses.
 
 - PORT (18080) — HTTP listen port.
 - CORS_ALLOW_ORIGINS (*) — Comma‑separated list of allowed origins for CORS; use `*` to allow all.
@@ -143,6 +152,23 @@ go run ./cmd/lumescope
 - `GET /v1/version-matrix` — chain action versions, SN capabilities, compatibility (stubbed data)
 
 Note: Background workers already fetch data into the DB. API handlers are currently placeholders and will be wired to the DB in subsequent work.
+
+
+## API Documentation
+Interactive API documentation is available via Swagger UI:
+- `GET /docs` — Swagger UI interface for exploring and testing the API
+- `GET /openapi.json` — OpenAPI 3.0 specification in JSON format
+
+The OpenAPI specification source is maintained in `docs/openapi.yaml` and is duplicated as JSON at `docs/openapi.json`. Both files are kept in sync and document all available endpoints, request parameters, and response schemas.
+
+To access the documentation:
+```bash
+# After starting the server, open in your browser:
+open http://localhost:18080/docs
+
+# Or get the raw spec:
+curl http://localhost:18080/openapi.json | jq .
+```
 
 
 ## Background tasks

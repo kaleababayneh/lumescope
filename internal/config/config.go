@@ -1,10 +1,13 @@
 package config
 
 import (
+	"log"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 // Config holds runtime configuration for the API server.
@@ -36,6 +39,11 @@ type Config struct {
 }
 
 func Load() Config {
+	// Load .env file if it exists (ignore error if file doesn't exist)
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Note: .env file not found or could not be loaded (will use environment variables or defaults): %v", err)
+	}
+
 	port := getenv("PORT", "18080")
 	origins := splitAndClean(getenv("CORS_ALLOW_ORIGINS", "*"))
 
@@ -48,11 +56,11 @@ func Load() Config {
 		IdleTimeout:       durationEnv("IDLE_TIMEOUT", 120*time.Second),
 		RequestTimeout:    durationEnv("REQUEST_TIMEOUT", 10*time.Second),
 
-		DB_DSN:            getenv("DB_DSN", "postgres://postgres:postgres@localhost:5432/lumescope?sslmode=disable"),
-		DB_MaxConns:       int32Env("DB_MAX_CONNS", 10),
+		DB_DSN:      getenv("DB_DSN", "postgres://postgres:postgres@localhost:5432/lumescope?sslmode=disable"),
+		DB_MaxConns: int32Env("DB_MAX_CONNS", 10),
 
-		LumeraAPIBase:     getenv("LUMERA_API_BASE", "http://localhost:1317"),
-		HTTPTimeout:       durationEnv("HTTP_TIMEOUT", 10*time.Second),
+		LumeraAPIBase: getenv("LUMERA_API_BASE", "http://localhost:1317"),
+		HTTPTimeout:   durationEnv("HTTP_TIMEOUT", 10*time.Second),
 
 		ValidatorsSyncInterval: durationEnv("VALIDATORS_SYNC_INTERVAL", 5*time.Minute),
 		SupernodesSyncInterval: durationEnv("SUPERNODES_SYNC_INTERVAL", 2*time.Minute),

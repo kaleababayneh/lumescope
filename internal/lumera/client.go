@@ -15,15 +15,15 @@ import (
 
 // Client is a minimal Lumera/Cosmos SDK REST client using stdlib only.
 type Client struct {
-	BaseURL    string
-	HTTP       *http.Client
-	UserAgent  string
+	BaseURL   string
+	HTTP      *http.Client
+	UserAgent string
 }
 
 func NewClient(baseURL string, timeout time.Duration) *Client {
 	return &Client{
-		BaseURL: strings.TrimRight(baseURL, "/"),
-		HTTP: &http.Client{Timeout: timeout},
+		BaseURL:   strings.TrimRight(baseURL, "/"),
+		HTTP:      &http.Client{Timeout: timeout},
 		UserAgent: "lumescope/preview",
 	}
 }
@@ -34,11 +34,17 @@ func (c *Client) doJSON(ctx context.Context, method, path string, q url.Values, 
 		u += "?" + q.Encode()
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u, nil)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Accept", "application/json")
-	if c.UserAgent != "" { req.Header.Set("User-Agent", c.UserAgent) }
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
 	resp, err := c.HTTP.Do(req)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -57,23 +63,30 @@ type ValidatorsResponse struct {
 
 type Validator struct {
 	OperatorAddress string `json:"operator_address"`
-	Jailed         bool   `json:"jailed"`
-	Status         string `json:"status"`
-	Description    struct {
+	Jailed          bool   `json:"jailed"`
+	Status          string `json:"status"`
+	Description     struct {
 		Moniker string `json:"moniker"`
 	} `json:"description"`
 }
 
-// GetValidators fetches validators (all statuses). If status is empty, UNSPECIFIED is used.
+// GetValidators fetches validators (all statuses).
 func (c *Client) GetValidators(ctx context.Context, nextKey string, limit int) (vals []Validator, newNextKey string, err error) {
 	q := url.Values{}
-	q.Set("status", "BOND_STATUS_UNSPECIFIED")
-	if limit > 0 { q.Set("pagination.limit", fmt.Sprint(limit)) }
-	if nextKey != "" { q.Set("pagination.key", nextKey) }
+	if limit > 0 {
+		q.Set("pagination.limit", fmt.Sprint(limit))
+	}
+	if nextKey != "" {
+		q.Set("pagination.key", nextKey)
+	}
 	var out ValidatorsResponse
 	err = c.doJSON(ctx, http.MethodGet, "/cosmos/staking/v1beta1/validators", q, &out)
-	if err != nil { return nil, "", err }
-	if out.Pagination != nil { newNextKey = out.Pagination.NextKey }
+	if err != nil {
+		return nil, "", err
+	}
+	if out.Pagination != nil {
+		newNextKey = out.Pagination.NextKey
+	}
 	return out.Validators, newNextKey, nil
 }
 
@@ -94,47 +107,72 @@ type PrevIPAddress struct {
 	Height  string `json:"height"`
 }
 
+type PrevSupernodeAccount struct {
+	Account string `json:"account"`
+	Height  string `json:"height"`
+}
+
+type Evidence struct {
+	ActionID         string `json:"action_id"`
+	Description      string `json:"description"`
+	EvidenceType     string `json:"evidence_type"`
+	Height           int32  `json:"height"`
+	ReporterAddress  string `json:"reporter_address"`
+	Severity         string `json:"severity"`
+	ValidatorAddress string `json:"validator_address"`
+}
+
+type MetricsAggregate struct {
+	Metrics     map[string]any `json:"metrics"`
+	ReportCount string         `json:"report_count"`
+	Height      string         `json:"height"`
+}
+
 type Supernode struct {
-	ValidatorAddress   string `json:"validator_address"`
-	States             []SupernodeState `json:"states"`
-	Evidence           any    `json:"evidence"`
-	PrevIPAddresses    []PrevIPAddress `json:"prev_ip_addresses"`
-	Note               string `json:"note"` // protocol version note, e.g., "1.0.0"
-	Metrics            struct {
-		Metrics    map[string]any `json:"metrics"`
-		ReportCount string        `json:"report_count"`
-		Height      string        `json:"height"`
-	} `json:"metrics"`
-	SupernodeAccount   string `json:"supernode_account"`
-	P2PPortStr         string `json:"p2p_port"`
-	PrevSupernodeAccounts []string `json:"prev_supernode_accounts"`
+	ValidatorAddress      string                 `json:"validator_address"`
+	States                []SupernodeState       `json:"states"`
+	Evidence              []Evidence             `json:"evidence"`
+	PrevIPAddresses       []PrevIPAddress        `json:"prev_ip_addresses"`
+	Note                  string                 `json:"note"` // protocol version note, e.g., "1.0.0"
+	Metrics               MetricsAggregate       `json:"metrics"`
+	SupernodeAccount      string                 `json:"supernode_account"`
+	P2PPortStr            string                 `json:"p2p_port"`
+	PrevSupernodeAccounts []PrevSupernodeAccount `json:"prev_supernode_accounts"`
 }
 
 func (c *Client) GetSupernodes(ctx context.Context, nextKey string, limit int) (sns []Supernode, newNextKey string, err error) {
 	q := url.Values{}
-	if limit > 0 { q.Set("pagination.limit", fmt.Sprint(limit)) }
-	if nextKey != "" { q.Set("pagination.key", nextKey) }
+	if limit > 0 {
+		q.Set("pagination.limit", fmt.Sprint(limit))
+	}
+	if nextKey != "" {
+		q.Set("pagination.key", nextKey)
+	}
 	var out ListSupernodesResponse
 	err = c.doJSON(ctx, http.MethodGet, "/LumeraProtocol/lumera/supernode/list_super_nodes", q, &out)
-	if err != nil { return nil, "", err }
-	if out.Pagination != nil { newNextKey = out.Pagination.NextKey }
+	if err != nil {
+		return nil, "", err
+	}
+	if out.Pagination != nil {
+		newNextKey = out.Pagination.NextKey
+	}
 	return out.Supernodes, newNextKey, nil
 }
 
 // Actions
 
 type ListActionsResponse struct {
-	Actions    []Action `json:"actions"`
+	Actions    []Action    `json:"actions"`
 	Pagination *Pagination `json:"pagination"`
-	Total      string   `json:"total"`
+	Total      string      `json:"total"`
 }
 
 type Action struct {
-	Creator       string    `json:"creator"`
-	ActionID      string    `json:"actionID"`
-	ActionType    string    `json:"actionType"`
-	MetadataB64   string    `json:"metadata"`
-	Price         struct {
+	Creator     string `json:"creator"`
+	ActionID    string `json:"actionID"`
+	ActionType  string `json:"actionType"`
+	MetadataB64 string `json:"metadata"`
+	Price       struct {
 		Denom  string `json:"denom"`
 		Amount string `json:"amount"`
 	} `json:"price"`
@@ -146,14 +184,30 @@ type Action struct {
 
 func (c *Client) GetActions(ctx context.Context, actionType, actionState, nextKey string, limit int) (as []Action, newNextKey string, err error) {
 	q := url.Values{}
-	if actionType != "" { q.Set("actionType", actionType) } else { q.Set("actionType", "ACTION_TYPE_UNSPECIFIED") }
-	if actionState != "" { q.Set("actionState", actionState) } else { q.Set("actionState", "ACTION_STATE_UNSPECIFIED") }
-	if limit > 0 { q.Set("pagination.limit", fmt.Sprint(limit)) }
-	if nextKey != "" { q.Set("pagination.key", nextKey) }
+	if actionType != "" {
+		q.Set("actionType", actionType)
+	} else {
+		q.Set("actionType", "ACTION_TYPE_UNSPECIFIED")
+	}
+	if actionState != "" {
+		q.Set("actionState", actionState)
+	} else {
+		q.Set("actionState", "ACTION_STATE_UNSPECIFIED")
+	}
+	if limit > 0 {
+		q.Set("pagination.limit", fmt.Sprint(limit))
+	}
+	if nextKey != "" {
+		q.Set("pagination.key", nextKey)
+	}
 	var out ListActionsResponse
 	err = c.doJSON(ctx, http.MethodGet, "/LumeraProtocol/lumera/action/list_actions", q, &out)
-	if err != nil { return nil, "", err }
-	if out.Pagination != nil { newNextKey = out.Pagination.NextKey }
+	if err != nil {
+		return nil, "", err
+	}
+	if out.Pagination != nil {
+		newNextKey = out.Pagination.NextKey
+	}
 	return out.Actions, newNextKey, nil
 }
 

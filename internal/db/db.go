@@ -36,7 +36,11 @@ func Connect(ctx context.Context, dsn string, maxConns int32) (*pgxpool.Pool, er
 }
 
 // Close closes the pool.
-func Close(pool *pgxpool.Pool) { if pool != nil { pool.Close() } }
+func Close(pool *pgxpool.Pool) {
+	if pool != nil {
+		pool.Close()
+	}
+}
 
 // Bootstrap creates required tables and indexes if they do not exist.
 func Bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
@@ -50,8 +54,8 @@ func Bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
 			"currentStateHeight"   VARCHAR(255),
 			"ipAddress"            VARCHAR(64),
 			"p2pPort"              INTEGER,
-			"protocolVersion"      VARCHAR(32) NOT NULL DEFAULT '1.0.0',
-			"actualVersion"        VARCHAR(32),
+			"protocolVersion"      VARCHAR(255) NOT NULL DEFAULT '1.0.0',
+			"actualVersion"        VARCHAR(255),
 			"cpuUsagePercent"      DOUBLE PRECISION,
 			"cpuCores"             INTEGER,
 			"memoryTotalGb"        DOUBLE PRECISION,
@@ -109,36 +113,65 @@ func UpsertSupernode(ctx context.Context, pool *pgxpool.Pool, sn SupernodeDB) er
 		$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::jsonb,$23::jsonb,$24::jsonb,$25::jsonb,$26::jsonb,$27,$28,$29::jsonb,now(),now()
 	) ON CONFLICT ("supernodeAccount") DO UPDATE SET
 		"validatorAddress"=EXCLUDED."validatorAddress",
-		"validatorMoniker"=EXCLUDED."validatorMoniker",
+		"validatorMoniker"=COALESCE(NULLIF(EXCLUDED."validatorMoniker",''),supernodes."validatorMoniker"),
 		"currentState"=EXCLUDED."currentState",
 		"currentStateHeight"=EXCLUDED."currentStateHeight",
 		"ipAddress"=EXCLUDED."ipAddress",
 		"p2pPort"=EXCLUDED."p2pPort",
 		"protocolVersion"=EXCLUDED."protocolVersion",
-		"actualVersion"=EXCLUDED."actualVersion",
-		"cpuUsagePercent"=EXCLUDED."cpuUsagePercent",
-		"cpuCores"=EXCLUDED."cpuCores",
-		"memoryTotalGb"=EXCLUDED."memoryTotalGb",
-		"memoryUsedGb"=EXCLUDED."memoryUsedGb",
-		"memoryUsagePercent"=EXCLUDED."memoryUsagePercent",
-		"storageTotalBytes"=EXCLUDED."storageTotalBytes",
-		"storageUsedBytes"=EXCLUDED."storageUsedBytes",
-		"storageUsagePercent"=EXCLUDED."storageUsagePercent",
-		"hardwareSummary"=EXCLUDED."hardwareSummary",
-		"peersCount"=EXCLUDED."peersCount",
-		"uptimeSeconds"=EXCLUDED."uptimeSeconds",
-		rank=EXCLUDED.rank,
-		"registeredServices"=EXCLUDED."registeredServices",
-		"runningTasks"=EXCLUDED."runningTasks",
 		"stateHistory"=EXCLUDED."stateHistory",
 		evidence=EXCLUDED.evidence,
 		"prevIpAddresses"=EXCLUDED."prevIpAddresses",
-		"lastStatusCheck"=EXCLUDED."lastStatusCheck",
-		"isStatusApiAvailable"=EXCLUDED."isStatusApiAvailable",
-		"metricsReport"=EXCLUDED."metricsReport",
+		"metricsReport"=COALESCE(EXCLUDED."metricsReport",supernodes."metricsReport"),
+		"registeredServices"=COALESCE(EXCLUDED."registeredServices",supernodes."registeredServices"),
+		"runningTasks"=COALESCE(EXCLUDED."runningTasks",supernodes."runningTasks"),
 		"updatedAt"=now()`
 	_, err := pool.Exec(ctx, sql,
 		sn.SupernodeAccount, sn.ValidatorAddress, sn.ValidatorMoniker, sn.CurrentState, sn.CurrentStateHeight, sn.IPAddress, sn.P2PPort, sn.ProtocolVersion, sn.ActualVersion, sn.CPUUsagePercent, sn.CPUCores, sn.MemoryTotalGb, sn.MemoryUsedGb, sn.MemoryUsagePercent, sn.StorageTotalBytes, sn.StorageUsedBytes, sn.StorageUsagePercent, sn.HardwareSummary, sn.PeersCount, sn.UptimeSeconds, sn.Rank, sn.RegisteredServices, sn.RunningTasks, sn.StateHistory, sn.Evidence, sn.PrevIPAddresses, sn.LastStatusCheck, sn.IsStatusAPIAvailable, sn.MetricsReport,
+	)
+	return err
+}
+
+// UpdateSupernodeProbeData updates only probe-related fields for a supernode.
+// This is used by the probe loop to avoid overwriting other fields like ValidatorAddress, CurrentState, etc.
+func UpdateSupernodeProbeData(ctx context.Context, pool *pgxpool.Pool, sn SupernodeProbeUpdate) error {
+	sql := `UPDATE supernodes SET
+		"actualVersion"=COALESCE(NULLIF($2,''),"actualVersion"),
+		"cpuUsagePercent"=$3,
+		"cpuCores"=$4,
+		"memoryTotalGb"=$5,
+		"memoryUsedGb"=$6,
+		"memoryUsagePercent"=$7,
+		"storageTotalBytes"=$8,
+		"storageUsedBytes"=$9,
+		"storageUsagePercent"=$10,
+		"hardwareSummary"=$11,
+		"peersCount"=$12,
+		"uptimeSeconds"=$13,
+		rank=$14,
+		"lastStatusCheck"=$15,
+		"isStatusApiAvailable"=$16,
+		"metricsReport"=$17::jsonb,
+		"updatedAt"=now()
+	WHERE "supernodeAccount"=$1`
+	_, err := pool.Exec(ctx, sql,
+		sn.SupernodeAccount,
+		sn.ActualVersion,
+		sn.CPUUsagePercent,
+		sn.CPUCores,
+		sn.MemoryTotalGb,
+		sn.MemoryUsedGb,
+		sn.MemoryUsagePercent,
+		sn.StorageTotalBytes,
+		sn.StorageUsedBytes,
+		sn.StorageUsagePercent,
+		sn.HardwareSummary,
+		sn.PeersCount,
+		sn.UptimeSeconds,
+		sn.Rank,
+		sn.LastStatusCheck,
+		sn.IsStatusAPIAvailable,
+		sn.MetricsReport,
 	)
 	return err
 }
@@ -167,12 +200,16 @@ func UpsertAction(ctx context.Context, pool *pgxpool.Pool, a ActionDB) error {
 // ListKnownSupernodes returns supernode accounts and last known IP/port to probe.
 func ListKnownSupernodes(ctx context.Context, pool *pgxpool.Pool) ([]ProbeTarget, error) {
 	rows, err := pool.Query(ctx, `SELECT "supernodeAccount","ipAddress","p2pPort" FROM supernodes`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var out []ProbeTarget
 	for rows.Next() {
 		var t ProbeTarget
-		if err := rows.Scan(&t.SupernodeAccount, &t.IPAddress, &t.P2PPort); err != nil { return nil, err }
+		if err := rows.Scan(&t.SupernodeAccount, &t.IPAddress, &t.P2PPort); err != nil {
+			return nil, err
+		}
 		out = append(out, t)
 	}
 	return out, rows.Err()
@@ -181,54 +218,74 @@ func ListKnownSupernodes(ctx context.Context, pool *pgxpool.Pool) ([]ProbeTarget
 // Data structs used by DB helpers
 
 type SupernodeDB struct {
-	SupernodeAccount   string
-	ValidatorAddress   string
-	ValidatorMoniker   string
-	CurrentState       string
-	CurrentStateHeight string
-	IPAddress          string
-	P2PPort            int32
-	ProtocolVersion    string
-	ActualVersion      string
-	CPUUsagePercent    *float64
-	CPUCores           *int32
-	MemoryTotalGb      *float64
-	MemoryUsedGb       *float64
-	MemoryUsagePercent *float64
-	StorageTotalBytes  *int64
-	StorageUsedBytes   *int64
-	StorageUsagePercent *float64
-	HardwareSummary    *string
-	PeersCount         *int32
-	UptimeSeconds      *int64
-	Rank               *int32
-	RegisteredServices any
-	RunningTasks       any
-	StateHistory       any
-	Evidence           any
-	PrevIPAddresses    any
-	LastStatusCheck    *time.Time
+	SupernodeAccount     string
+	ValidatorAddress     string
+	ValidatorMoniker     string
+	CurrentState         string
+	CurrentStateHeight   string
+	IPAddress            string
+	P2PPort              int32
+	ProtocolVersion      string
+	ActualVersion        string
+	CPUUsagePercent      *float64
+	CPUCores             *int32
+	MemoryTotalGb        *float64
+	MemoryUsedGb         *float64
+	MemoryUsagePercent   *float64
+	StorageTotalBytes    *int64
+	StorageUsedBytes     *int64
+	StorageUsagePercent  *float64
+	HardwareSummary      *string
+	PeersCount           *int32
+	UptimeSeconds        *int64
+	Rank                 *int32
+	RegisteredServices   any
+	RunningTasks         any
+	StateHistory         any
+	Evidence             any
+	PrevIPAddresses      any
+	LastStatusCheck      *time.Time
 	IsStatusAPIAvailable bool
-	MetricsReport      any
+	MetricsReport        any
 }
 
 type ActionDB struct {
-	ActionID      string
-	Creator       string
-	ActionType    string
-	State         string
-	BlockHeight   int64
-	PriceDenom    string
-	PriceAmount   string
+	ActionID       string
+	Creator        string
+	ActionType     string
+	State          string
+	BlockHeight    int64
+	PriceDenom     string
+	PriceAmount    string
 	ExpirationTime int64
-	MetadataRaw   []byte
-	MetadataJSON  any
+	MetadataRaw    []byte
+	MetadataJSON   any
 }
 
 type ProbeTarget struct {
 	SupernodeAccount string
 	IPAddress        string
 	P2PPort          int32
+}
+
+type SupernodeProbeUpdate struct {
+	SupernodeAccount     string
+	ActualVersion        string
+	CPUUsagePercent      *float64
+	CPUCores             *int32
+	MemoryTotalGb        *float64
+	MemoryUsedGb         *float64
+	MemoryUsagePercent   *float64
+	StorageTotalBytes    *int64
+	StorageUsedBytes     *int64
+	StorageUsagePercent  *float64
+	HardwareSummary      *string
+	PeersCount           *int32
+	UptimeSeconds        *int64
+	Rank                 *int32
+	LastStatusCheck      *time.Time
+	IsStatusAPIAvailable bool
+	MetricsReport        any
 }
 
 // ErrNotFound sentinel

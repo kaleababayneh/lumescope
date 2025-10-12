@@ -73,6 +73,60 @@ func NewRouter(cfg config.Config) http.Handler {
 		handlers.VersionMatrix(w, r)
 	})
 
+	// OpenAPI spec endpoint
+	mux.HandleFunc("/openapi.json", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		http.ServeFile(w, r, "docs/openapi.json")
+	})
+
+	// Swagger UI documentation
+	mux.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`<!DOCTYPE html>
+<html lang="en">
+<head>
+	 <meta charset="UTF-8">
+	 <title>LumeScope API Documentation</title>
+	 <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+	 <style>
+	   html { box-sizing: border-box; overflow: -moz-scrollbars-vertical; overflow-y: scroll; }
+	   *, *:before, *:after { box-sizing: inherit; }
+	   body { margin: 0; padding: 0; }
+	 </style>
+</head>
+<body>
+	 <div id="swagger-ui"></div>
+	 <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+	 <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+	 <script>
+	   window.onload = function() {
+	     window.ui = SwaggerUIBundle({
+	       url: "/openapi.json",
+	       dom_id: '#swagger-ui',
+	       deepLinking: true,
+	       presets: [
+	         SwaggerUIBundle.presets.apis,
+	         SwaggerUIStandalonePreset
+	       ],
+	       plugins: [
+	         SwaggerUIBundle.plugins.DownloadUrl
+	       ],
+	       layout: "StandaloneLayout"
+	     });
+	   };
+	 </script>
+</body>
+</html>`))
+	})
+
 	// Fallback 404 handler for any other path
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
