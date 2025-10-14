@@ -7,8 +7,14 @@
   },
   "servers": [
     {
-      "url": "http://localhost:8080",
-      "description": "Local development server"
+      "url": "http://localhost:{port}",
+      "description": "Local development server",
+      "variables": {
+        "port": {
+          "default": "18080",
+          "description": "HTTP server port"
+        }
+      }
     }
   ],
   "paths": {
@@ -293,6 +299,14 @@
           "raw": {
             "type": "string",
             "description": "Base64 encoded raw bytes for unknown types"
+          },
+          "superNodes": {
+            "type": "array",
+            "description": "List of SuperNode operator addresses associated with the action",
+            "items": {
+              "type": "string",
+              "example": "lumera1563uuzljqvpanh79w2tvymqsly73v9nwygda73"
+            }
           }
         }
       },
@@ -326,6 +340,14 @@
             "type": "object",
             "additionalProperties": true,
             "description": "Decoded action data"
+          },
+          "superNodes": {
+            "type": "array",
+            "description": "List of SuperNode operator addresses associated with the action",
+            "items": {
+              "type": "string",
+              "example": "lumera1563uuzljqvpanh79w2tvymqsly73v9nwygda73"
+            }
           },
           "cascade_layout": {
             "$ref": "#/components/schemas/CascadeLEP1"

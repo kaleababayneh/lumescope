@@ -198,6 +198,11 @@ func (r *Runner) syncActions(ctx context.Context) error {
 					exp = v
 				}
 			}
+			// Ensure SuperNodes is never nil to avoid null in DB
+			superNodes := a.SuperNodes
+			if superNodes == nil {
+				superNodes = []string{}
+			}
 			rec := db.ActionDB{
 				ActionID:       a.ActionID,
 				Creator:        a.Creator,
@@ -209,6 +214,7 @@ func (r *Runner) syncActions(ctx context.Context) error {
 				ExpirationTime: exp,
 				MetadataRaw:    raw,
 				MetadataJSON:   toJSONB(decoded),
+				SuperNodes:     toJSONB(superNodes),
 			}
 			if err := db.UpsertAction(ctx, r.DB, rec); err != nil {
 				log.Printf("upsert action %s: %v", a.ActionID, err)

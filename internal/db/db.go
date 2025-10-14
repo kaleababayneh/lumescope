@@ -178,8 +178,8 @@ func UpdateSupernodeProbeData(ctx context.Context, pool *pgxpool.Pool, sn Supern
 
 // UpsertAction inserts/updates an action record.
 func UpsertAction(ctx context.Context, pool *pgxpool.Pool, a ActionDB) error {
-	sql := `INSERT INTO actions ("actionID","creator","actionType","state","blockHeight","priceDenom","priceAmount","expirationTime","metadataRaw","metadataJSON","createdAt","updatedAt")
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,now(),now())
+	sql := `INSERT INTO actions ("actionID","creator","actionType","state","blockHeight","priceDenom","priceAmount","expirationTime","metadataRaw","metadataJSON","superNodes","createdAt","updatedAt")
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,now(),now())
 	ON CONFLICT ("actionID") DO UPDATE SET
 		"creator"=EXCLUDED."creator",
 		"actionType"=EXCLUDED."actionType",
@@ -190,9 +190,10 @@ func UpsertAction(ctx context.Context, pool *pgxpool.Pool, a ActionDB) error {
 		"expirationTime"=EXCLUDED."expirationTime",
 		"metadataRaw"=EXCLUDED."metadataRaw",
 		"metadataJSON"=EXCLUDED."metadataJSON",
+		"superNodes"=EXCLUDED."superNodes",
 		"updatedAt"=now()`
 	_, err := pool.Exec(ctx, sql,
-		a.ActionID, a.Creator, a.ActionType, a.State, a.BlockHeight, a.PriceDenom, a.PriceAmount, a.ExpirationTime, a.MetadataRaw, a.MetadataJSON,
+		a.ActionID, a.Creator, a.ActionType, a.State, a.BlockHeight, a.PriceDenom, a.PriceAmount, a.ExpirationTime, a.MetadataRaw, a.MetadataJSON, a.SuperNodes,
 	)
 	return err
 }
@@ -260,6 +261,7 @@ type ActionDB struct {
 	ExpirationTime int64
 	MetadataRaw    []byte
 	MetadataJSON   any
+	SuperNodes     any
 }
 
 type ProbeTarget struct {
