@@ -4,15 +4,15 @@ LumeScope is a read‑only aggregation and indexing service for the Lumera netwo
 
 Current status: preview skeleton with working HTTP server, configuration, DB bootstrap, Lumera REST client, and background sync/probing.
 
-
 ## What it does (today)
+
 - Stdlib‑only HTTP API server (net/http + ServeMux), no third‑party web frameworks.
 - Health endpoints: `/healthz` (liveness) and `/readyz` (readiness stub).
 - Stubbed v1 endpoints (wired for future DB reads):
   - `GET /v1/actions` (filters/pagination placeholders, ETag/Last‑Modified support)
   - `GET /v1/actions/{id}` (joined view placeholder)
   - `GET /v1/supernodes/metrics` (rollup placeholder)
-  - `GET /v1/version-matrix` (LEP2 compatibility placeholder)
+  - `GET /v1/version/matrix` (LEP2 compatibility placeholder)
 - Database support (PostgreSQL via pgx). Bootstrap creates the core tables/indexes automatically at startup.
 - Lumera REST client (Cosmos SDK API) for:
   - Validators list (active/inactive/jailed)
@@ -22,21 +22,21 @@ Current status: preview skeleton with working HTTP server, configuration, DB boo
   - Periodically fetch validators/supernodes/actions from Lumera and upsert into DB.
   - Probe supernode ports 4444/4445 and call status API on 8002, then persist metrics.
 
-
 ## Prerequisites
+
 - Go 1.24+
 - PostgreSQL 13+ (tested with 14+)
 - Network access to a Lumera REST (LCD) endpoint (default `http://localhost:1317`)
 - Optional: outbound access to supernodes on ports 4444, 4445, and 8002 for probing
 
-
 ## Quick start (TL;DR)
+
 1) Start PostgreSQL and create a database:
 
 ```bash
-createdb lumescope || true
-# or via psql:
-# psql -U postgres -c 'CREATE DATABASE lumescope;'
+  createdb lumescope || true
+  # or via psql:
+  # psql -U postgres -c 'CREATE DATABASE lumescope;'
 ```
 
 2) Build and run:
@@ -59,8 +59,8 @@ curl -s http://localhost:18080/v1/actions | jq .
 
 The server bootstraps DB tables automatically on first start.
 
-
 ## Configuration
+
 Configuration can be provided via environment variables or by creating a `.env` file in the project root. The `.env` file is loaded automatically if present.
 
 To get started, copy the example file:
@@ -82,14 +82,17 @@ All settings are shown below with their defaults in parentheses.
 - REQUEST_TIMEOUT (10s) — Per‑request server‑side timeout.
 
 Database:
+
 - DB_DSN (postgres://postgres:postgres@localhost:5432/lumescope?sslmode=disable)
 - DB_MAX_CONNS (10)
 
 Lumera chain REST (LCD):
+
 - LUMERA_API_BASE (http://localhost:1317)
 - HTTP_TIMEOUT (10s) — Outbound HTTP timeout for Lumera calls.
 
 Background workers:
+
 - VALIDATORS_SYNC_INTERVAL (5m)
 - SUPERNODES_SYNC_INTERVAL (2m)
 - ACTIONS_SYNC_INTERVAL (30s)
@@ -114,8 +117,8 @@ export CORS_ALLOW_ORIGINS="*"
 ./bin/lumescope
 ```
 
-
 ## Build and run
+
 - Build:
 
 ```bash
@@ -134,34 +137,36 @@ go build -o bin/lumescope ./cmd/lumescope
 go run ./cmd/lumescope
 ```
 
-
 ## Database notes
+
 - The application automatically creates required tables and indexes on startup (bootstrap step).
 - If using a non‑default Postgres setup, adjust `DB_DSN` accordingly. Examples:
   - Local trust auth: `postgres://localhost/lumescope?sslmode=disable`
   - With password: `postgres://user:pass@localhost:5432/lumescope?sslmode=disable`
 - Ensure the configured user has privileges to create tables/indexes in the database.
 
-
 ## Endpoints (preview)
+
 - `GET /healthz` — liveness (always 200 while process is healthy)
 - `GET /readyz` — readiness (currently returns 200; replace with real checks later)
 - `GET /v1/actions` — list (stubbed data; supports ETag/Last‑Modified headers)
 - `GET /v1/actions/{id}` — details (stubbed data)
 - `GET /v1/supernodes/metrics` — aggregated metrics (stubbed data)
-- `GET /v1/version-matrix` — chain action versions, SN capabilities, compatibility (stubbed data)
+- `GET /v1/version/matrix` — chain action versions, SN capabilities, compatibility (stubbed data)
 
 Note: Background workers already fetch data into the DB. API handlers are currently placeholders and will be wired to the DB in subsequent work.
 
-
 ## API Documentation
+
 Interactive API documentation is available via Swagger UI:
+
 - `GET /docs` — Swagger UI interface for exploring and testing the API
 - `GET /openapi.json` — OpenAPI 3.0 specification in JSON format
 
 The OpenAPI specification source is maintained in `docs/openapi.yaml` and is duplicated as JSON at `docs/openapi.json`. Both files are kept in sync and document all available endpoints, request parameters, and response schemas.
 
 To access the documentation:
+
 ```bash
 # After starting the server, open in your browser:
 open http://localhost:18080/docs
@@ -170,8 +175,8 @@ open http://localhost:18080/docs
 curl http://localhost:18080/openapi.json | jq .
 ```
 
-
 ## Background tasks
+
 The scheduler runs multiple jobs on independent intervals:
 - Validators sync — pulls validators from Lumera LCD and caches monikers.
 - Supernodes sync — pulls supernode list, joins validator info, persists state/history/metrics.
@@ -180,13 +185,13 @@ The scheduler runs multiple jobs on independent intervals:
 
 Tune intervals with the environment variables listed above.
 
-
 ## CORS and security
+
 - Set `CORS_ALLOW_ORIGINS` to a comma‑separated allowlist of your web origins for browsers. Use `*` for permissive development.
 - This service is read‑only by design. Add a reverse proxy and rate limiting as needed for public exposure.
 
-
 ## Troubleshooting
+
 - Cannot connect to Postgres:
   - Verify `DB_DSN` and that the database exists: `psql <dsn> -c "\dt"`.
   - Check firewall/network for port 5432.
@@ -197,8 +202,8 @@ Tune intervals with the environment variables listed above.
 - CORS errors in browser:
   - Set `CORS_ALLOW_ORIGINS` appropriately (e.g., `https://your.site`), or `*` during development.
 
-
 ## Roadmap (next)
+
 - Wire API handlers to DB queries (replace stubs with real data).
 - Add ETag/Last‑Modified based on DB timestamps.
 - Expose Prometheus metrics (optional, behind build tag or separate binary) without external framework.

@@ -5,67 +5,103 @@
       {
         "path": "/healthz",
         "status": "implemented",
-        "evidence": ["internal/handlers/health.go:22-28", "internal/server/router.go:18"]
+        "evidence": ["internal/handlers/health.go:22-28", "internal/server/router.go:19"]
       },
       {
         "path": "/readyz",
         "status": "implemented",
-        "evidence": ["internal/handlers/health.go:48-57", "internal/server/router.go:19"]
+        "evidence": ["internal/handlers/health.go:48-57", "internal/server/router.go:20"]
       },
       {
         "path": "/v1/actions",
-        "status": "partial",
-        "evidence": ["internal/handlers/actions.go:28-72", "internal/server/router.go:33-43"],
-        "notes": "Handler implemented with stub data; pagination, filters, and ETag support present but not wired to database queries. Background sync populates DB but API returns mock data."
+        "status": "implemented",
+        "evidence": ["internal/handlers/actions.go:31-162", "internal/server/router.go:34-44"],
+        "notes": "Handler fully connected to database via db.ListActionsFiltered. Supports filters (type, creator, state, from/to block height), pagination with cursor, and returns decoded metadata from DB."
       },
       {
         "path": "/v1/actions/{id}",
-        "status": "partial",
-        "evidence": ["internal/handlers/actions.go:74-117", "internal/server/router.go:46-58"],
-        "notes": "Handler implemented with stub data structure including CascadeLayout placeholder. Not connected to database; no actual LEP1 resolution implemented."
+        "status": "implemented",
+        "evidence": ["internal/handlers/actions.go:165-226", "internal/server/router.go:47-59"],
+        "notes": "Handler connected to database via db.GetActionByID. Returns action details with decoded metadata, price info, and super_nodes list from DB."
       },
       {
         "path": "/v1/supernodes/metrics",
-        "status": "partial",
-        "evidence": ["internal/handlers/supernodes.go:33-71", "internal/server/router.go:60-66"],
-        "notes": "Handler implemented with stub rollup data. Background probes collect real metrics into DB, but API handler returns mock aggregations."
+        "status": "implemented",
+        "evidence": ["internal/handlers/supernodes.go:75-243", "internal/server/router.go:70-76"],
+        "notes": "Handler connected to database via db.ListSupernodeMetricsFiltered. Returns real supernode metrics with filters (currentState, status, version, minFailedProbeCounter), pagination, and aggregated data from DB."
       },
       {
-        "path": "/v1/version-matrix",
-        "status": "partial",
-        "evidence": ["internal/handlers/version.go:42-62", "internal/server/router.go:68-74"],
-        "notes": "Handler implemented with stub compatibility verdicts. No actual LEP2 capability detection or version matrix computation from real supernode data."
+        "path": "/v1/supernodes/{id}/metrics",
+        "status": "implemented",
+        "evidence": ["internal/handlers/supernodes.go:276-337", "internal/server/router.go:79-91"],
+        "notes": "Handler connected to database via db.GetSupernodeByID. Returns single supernode metrics including CPU, memory, storage, peers, uptime, and probe status."
+      },
+      {
+        "path": "/v1/supernodes/unavailable",
+        "status": "implemented",
+        "evidence": ["internal/handlers/supernodes.go:248-272", "internal/server/router.go:93-99"],
+        "notes": "Handler connected to database via db.ListUnavailableSupernodes. Returns supernodes where isStatusApiAvailable=false, filtered by currentState."
+      },
+      {
+        "path": "/v1/supernodes/sync",
+        "status": "implemented",
+        "evidence": ["internal/handlers/supernodes.go:59-73", "internal/server/router.go:61-68"],
+        "notes": "POST endpoint to trigger manual sync+probe of all supernodes. Returns 202 Accepted if started, 204 No Content if already running."
+      },
+      {
+        "path": "/v1/version/matrix",
+        "status": "implemented",
+        "evidence": ["internal/handlers/version.go:27-68", "internal/server/router.go:101-107"],
+        "notes": "Handler connected to database via db.ListVersionMatrix. Returns aggregated version statistics from real supernode data with total/available/unavailable counts per version."
+      },
+      {
+        "path": "/openapi.json",
+        "status": "implemented",
+        "evidence": ["internal/server/router.go:110-116"],
+        "notes": "Serves OpenAPI specification file."
+      },
+      {
+        "path": "/docs",
+        "status": "implemented",
+        "evidence": ["internal/server/router.go:119-161"],
+        "notes": "Swagger UI documentation endpoint."
+      },
+      {
+        "path": "/metrics",
+        "status": "stub",
+        "evidence": ["internal/server/router.go:23-31"],
+        "notes": "Prometheus metrics endpoint returns stub text (no third-party deps)."
       }
     ],
     "background_processes": [
       {
         "name": "scheduler",
         "status": "implemented",
-        "evidence": ["internal/background/scheduler.go:32-41"],
+        "evidence": ["internal/background/scheduler.go:31-44"],
         "loops": [
           {
             "name": "validators sync",
             "status": "implemented",
-            "evidence": ["internal/background/scheduler.go:43-56", "internal/background/scheduler.go:104-127"],
+            "evidence": ["internal/background/scheduler.go:46-59", "internal/background/scheduler.go:107-129"],
             "notes": "Fetches validators from Lumera LCD, caches monikers for supernode join"
           },
           {
             "name": "supernodes sync",
             "status": "implemented",
-            "evidence": ["internal/background/scheduler.go:58-71", "internal/background/scheduler.go:137-174"],
+            "evidence": ["internal/background/scheduler.go:61-74", "internal/background/scheduler.go:140-177"],
             "notes": "Fetches supernodes list, joins validator monikers, persists to DB with state history"
           },
           {
             "name": "actions sync",
             "status": "implemented",
-            "evidence": ["internal/background/scheduler.go:73-86", "internal/background/scheduler.go:176-223"],
+            "evidence": ["internal/background/scheduler.go:76-89", "internal/background/scheduler.go:179-232"],
             "notes": "Fetches actions, decodes metadata using protobuf codecs, upserts to DB"
           },
           {
             "name": "supernode probes",
             "status": "implemented",
-            "evidence": ["internal/background/scheduler.go:88-101", "internal/background/scheduler.go:225-312"],
-            "notes": "TCP port checks (4444, 4445) and status API fetch (port 8002), persists metrics to DB"
+            "evidence": ["internal/background/scheduler.go:91-104", "internal/background/scheduler.go:264-352"],
+            "notes": "TCP port checks and status API fetch (port 8002), persists metrics to DB with probe tracking (lastSuccessfulProbe, failedProbeCounter)"
           }
         ]
       }
@@ -79,35 +115,65 @@
     },
     "data_access": {
       "db_layer": "present",
-      "key_files": ["internal/db/db.go:1-292"],
+      "key_files": ["internal/db/db.go:1-913"],
       "operations": [
         {
           "name": "Bootstrap",
-          "evidence": ["internal/db/db.go:46-106"],
+          "evidence": ["internal/db/db.go:48-109"],
           "notes": "Creates supernodes and actions tables with indexes on startup"
         },
         {
           "name": "UpsertSupernode",
-          "evidence": ["internal/db/db.go:109-133"],
+          "evidence": ["internal/db/db.go:112-136"],
           "notes": "Inserts or updates supernode with state, IP, protocol version, metrics"
         },
         {
           "name": "UpsertAction",
-          "evidence": ["internal/db/db.go:180-198"],
-          "notes": "Inserts or updates action with decoded metadata JSON"
+          "evidence": ["internal/db/db.go:290-309"],
+          "notes": "Inserts or updates action with decoded metadata JSON and superNodes array"
         },
         {
           "name": "UpdateSupernodeProbeData",
-          "evidence": ["internal/db/db.go:137-177"],
-          "notes": "Updates probe results: version, CPU, memory, storage, uptime, status API availability"
+          "evidence": ["internal/db/db.go:140-287"],
+          "notes": "Updates probe results with smart tracking: lastSuccessfulProbe on success, failedProbeCounter increment on failure, lastKnownActualVersion preservation"
         },
         {
           "name": "ListKnownSupernodes",
-          "evidence": ["internal/db/db.go:201-216"],
+          "evidence": ["internal/db/db.go:312-327"],
           "notes": "Returns probe targets for scheduler"
+        },
+        {
+          "name": "ListSupernodeMetricsFiltered",
+          "evidence": ["internal/db/db.go:329-456"],
+          "notes": "Filtered list with pagination, supports currentState, status, version, minFailed filters"
+        },
+        {
+          "name": "ListUnavailableSupernodes",
+          "evidence": ["internal/db/db.go:461-523"],
+          "notes": "Returns supernodes where isStatusApiAvailable=false"
+        },
+        {
+          "name": "ListActionsFiltered",
+          "evidence": ["internal/db/db.go:661-758"],
+          "notes": "Filtered list with keyset pagination, supports type, creator, state, fromHeight, toHeight filters"
+        },
+        {
+          "name": "GetActionByID",
+          "evidence": ["internal/db/db.go:761-788"],
+          "notes": "Fetches single action by ID with all fields including metadataJSON and superNodes"
+        },
+        {
+          "name": "GetSupernodeByID",
+          "evidence": ["internal/db/db.go:791-849"],
+          "notes": "Fetches single supernode by account with all metrics fields"
+        },
+        {
+          "name": "ListVersionMatrix",
+          "evidence": ["internal/db/db.go:862-910"],
+          "notes": "Aggregated version statistics with total/available/unavailable counts"
         }
       ],
-      "notes": "PostgreSQL via pgx driver. Schema includes JSONB fields for flexible metadata storage. API handlers NOT YET wired to DB queries."
+      "notes": "PostgreSQL via pgx driver. Schema includes JSONB fields for flexible metadata storage. All API handlers ARE connected to DB queries."
     },
     "integration": {
       "lumera_client": "present",
@@ -121,12 +187,12 @@
         {
           "name": "GetSupernodes",
           "evidence": ["internal/lumera/client.go:143-160"],
-          "endpoint": "/LumeraProtocol/lumera/supernode/list_super_nodes"
+          "endpoint": "/LumeraProtocol/lumera/supernode/v1/list_super_nodes"
         },
         {
           "name": "GetActions",
           "evidence": ["internal/lumera/client.go:185-212"],
-          "endpoint": "/LumeraProtocol/lumera/action/list_actions"
+          "endpoint": "/LumeraProtocol/lumera/action/v1/list_actions"
         }
       ],
       "notes": "Stdlib-only HTTP client with pagination support. Configured via LUMERA_API_BASE env var."
@@ -143,55 +209,66 @@
   },
   "feature_status": {
     "GET /v1/actions": {
-      "status": "partial",
-      "notes": "Endpoint exists and returns JSON with pagination structure, ETag/Last-Modified headers. However, returns stub data; not connected to database queries. Background sync DOES populate actions table with decoded metadata.",
-      "evidence": ["internal/handlers/actions.go:28-72", "internal/background/scheduler.go:176-223", "internal/db/db.go:180-198"],
-      "missing": ["Wire handler to DB queries", "Implement filters (type, creator, state, time range)", "Real ETag/Last-Modified from DB timestamps", "Stable sort for pagination"]
+      "status": "implemented",
+      "notes": "Endpoint fully connected to database via db.ListActionsFiltered. Supports filters (type, creator, state, from/to block height), keyset pagination with cursor, ETag/Last-Modified headers, and returns decoded metadata from DB.",
+      "evidence": ["internal/handlers/actions.go:31-162", "internal/db/db.go:661-758"],
+      "implemented": ["DB query with filters", "Keyset pagination", "Type/creator/state filters", "Block height range filters", "Decoded metadata from DB", "Schema version field"],
+      "remaining": ["ETag based on actual DB timestamps (currently uses current time)", "Redis caching layer"]
     },
     "GET /v1/actions/{id}": {
-      "status": "partial",
-      "notes": "Endpoint exists with joined view structure including CascadeLayout. Returns stub data; no actual LEP1 resolver implemented. Background sync stores actions but no Cascade resolution logic exists.",
-      "evidence": ["internal/handlers/actions.go:74-117", "internal/background/scheduler.go:176-223"],
-      "missing": ["Wire handler to DB query by actionID", "Implement LEP1 Cascade layout resolver", "Fetch and attach file descriptors (sizes, MIME, piece counts)", "Real schema version tracking"]
+      "status": "implemented",
+      "notes": "Endpoint connected to database via db.GetActionByID. Returns full action details with decoded metadata, price info, and super_nodes list.",
+      "evidence": ["internal/handlers/actions.go:165-226", "internal/db/db.go:761-788"],
+      "implemented": ["DB query by actionID", "Decoded metadata JSON", "Price info", "SuperNodes array", "Schema version"],
+      "remaining": ["LEP1 Cascade layout resolver (file descriptors, sizes, MIME types)"]
     },
     "GET /v1/supernodes/metrics": {
-      "status": "partial",
-      "notes": "Endpoint exists with rollup structure. Returns stub aggregations. Background probes collect real metrics (CPU, memory, storage, ports, status API) into DB but API handler does not aggregate from DB.",
-      "evidence": ["internal/handlers/supernodes.go:33-71", "internal/background/scheduler.go:225-312", "internal/db/db.go:137-177"],
-      "missing": ["Wire handler to DB aggregation queries", "Real-time rollups (availability, RTT, queue depth)", "Per-node freshness timestamps from lastStatusCheck", "Cache strategy with <400ms p95 target"]
+      "status": "implemented",
+      "notes": "Endpoint connected to database via db.ListSupernodeMetricsFiltered. Returns real aggregated metrics from DB with filtering and pagination.",
+      "evidence": ["internal/handlers/supernodes.go:75-243", "internal/db/db.go:329-456"],
+      "implemented": ["DB aggregation queries", "currentState filter (running/stopped/any)", "status filter (available/unavailable/any)", "version filter", "minFailedProbeCounter filter", "Pagination with cursor", "Real metrics (CPU, memory, storage, uptime, peers)", "LastStatusCheck timestamps", "LastSuccessfulProbe and FailedProbeCounter tracking"],
+      "remaining": ["Redis caching for <400ms p95 target"]
     },
-    "GET /v1/version-matrix": {
-      "status": "partial",
-      "notes": "Endpoint exists with compatibility verdict structure. Returns stub data. No capability detection or version matrix computation logic exists. Background sync could theoretically extract versions from supernodes but no analysis is performed.",
-      "evidence": ["internal/handlers/version.go:42-62"],
-      "missing": ["Extract action_versions from chain state", "Parse supernode protocol versions and capabilities from notes/metrics", "Compute compatibility verdicts (full/partial/incompatible)", "Rationale generation for each verdict"]
+    "GET /v1/supernodes/{id}/metrics": {
+      "status": "implemented",
+      "notes": "Endpoint connected to database via db.GetSupernodeByID. Returns single supernode with full metrics.",
+      "evidence": ["internal/handlers/supernodes.go:276-337", "internal/db/db.go:791-849"]
+    },
+    "GET /v1/supernodes/unavailable": {
+      "status": "implemented",
+      "notes": "Endpoint connected to database via db.ListUnavailableSupernodes. Returns supernodes where status API is unavailable.",
+      "evidence": ["internal/handlers/supernodes.go:248-272", "internal/db/db.go:461-523"]
+    },
+    "POST /v1/supernodes/sync": {
+      "status": "implemented",
+      "notes": "Triggers manual sync+probe of all supernodes. Returns 202 if started, 204 if already running.",
+      "evidence": ["internal/handlers/supernodes.go:59-73", "internal/background/scheduler.go:236-262"]
+    },
+    "GET /v1/version/matrix": {
+      "status": "implemented",
+      "notes": "Endpoint connected to database via db.ListVersionMatrix. Returns aggregated version statistics from real supernode data with availability counts.",
+      "evidence": ["internal/handlers/version.go:27-68", "internal/db/db.go:862-910"],
+      "implemented": ["Aggregated version counts from DB", "Available/unavailable breakdown", "Latest version detection (by count)", "Uses lastKnownActualVersion with fallback to actualVersion"],
+      "remaining": ["Chain action_versions extraction", "Full LEP2 capability detection", "Compatibility verdict rationale"]
     }
   },
   "next_steps": [
-    "Wire API handlers to database queries (Priority: CRITICAL)",
-    "Implement /v1/actions list endpoint with DB query, filters (type, creator, state, time), pagination, and ETag support",
-    "Implement /v1/actions/{id} detail endpoint with DB query by actionID",
-    "Implement /v1/supernodes/metrics aggregation from DB with rollups (availability, RTT, queue depth)",
-    "Implement /v1/version-matrix with real chain action versions and supernode capability detection",
-    "Add LEP1 Cascade resolver for joined Action detail view (file descriptors, sizes, MIME types)",
-    "Implement ETag/Last-Modified based on actual DB timestamps for caching",
-    "Add comprehensive error handling and validation to API handlers",
-    "Add integration tests for API endpoints against seeded DB",
+    "Implement LEP1 Cascade layout resolver for /v1/actions/{id} (file descriptors, sizes, MIME types)",
+    "Implement real ETag/Last-Modified based on actual DB timestamps for proper caching",
+    "Add Redis caching layer for p95 latency targets",
+    "Implement full LEP2 version matrix with chain action_versions and capability detection",
     "Add Prometheus metrics endpoint (currently stubbed)",
+    "Add rate limiting (mentioned in requirements)",
     "Create Helm chart and Docker packaging for deployment"
   ],
   "gap_analysis": {
     "critical_gaps": [
-      "API handlers return stub data; not connected to database despite background sync populating tables",
-      "LEP1 Cascade layout resolver not implemented (required for /v1/actions/{id})",
-      "LEP2 version matrix and compatibility logic not implemented",
-      "No aggregation queries for supernode metrics rollups"
+      "LEP1 Cascade layout resolver not implemented (required for full /v1/actions/{id} response)",
+      "Full LEP2 compatibility logic with chain action_versions not implemented"
     ],
     "moderate_gaps": [
-      "Filters on /v1/actions (type, creator, state, time range) accepted but not applied",
       "ETag/Last-Modified headers present but not based on real DB timestamps",
-      "Pagination cursor logic exists but not connected to DB offset/keyset pagination",
-      "No caching strategy (Redis) despite being mentioned in requirements"
+      "No Redis caching strategy despite being mentioned in requirements"
     ],
     "minor_gaps": [
       "Prometheus metrics endpoint stubbed (no actual metrics exposed)",
@@ -200,5 +277,5 @@
       "No GraphQL facade (extended feature)"
     ]
   },
-  "last_updated": "2025-10-12T04:24:00Z"
+  "last_updated": "2025-12-05T04:43:00Z"
 }

@@ -149,7 +149,7 @@ func (c *Client) GetSupernodes(ctx context.Context, nextKey string, limit int) (
 		q.Set("pagination.key", nextKey)
 	}
 	var out ListSupernodesResponse
-	err = c.doJSON(ctx, http.MethodGet, "/LumeraProtocol/lumera/supernode/list_super_nodes", q, &out)
+	err = c.doJSON(ctx, http.MethodGet, "/LumeraProtocol/lumera/supernode/v1/list_super_nodes", q, &out)
 	if err != nil {
 		return nil, "", err
 	}
@@ -167,19 +167,62 @@ type ListActionsResponse struct {
 	Total      string      `json:"total"`
 }
 
-type Action struct {
-	Creator     string `json:"creator"`
-	ActionID    string `json:"actionID"`
-	ActionType  string `json:"actionType"`
-	MetadataB64 string `json:"metadata"`
-	Price       struct {
+// PriceField handles unmarshaling price from both string ("10090ulume") and struct formats
+type PriceField struct {
+	Denom  string `json:"denom"`
+	Amount string `json:"amount"`
+}
+
+// UnmarshalJSON implements custom unmarshaling for PriceField to handle both string and struct formats
+func (p *PriceField) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as a struct first
+	var priceStruct struct {
 		Denom  string `json:"denom"`
 		Amount string `json:"amount"`
-	} `json:"price"`
-	ExpirationTime string   `json:"expirationTime"`
-	State          string   `json:"state"`
-	BlockHeight    string   `json:"blockHeight"`
-	SuperNodes     []string `json:"superNodes"`
+	}
+	if err := json.Unmarshal(data, &priceStruct); err == nil && (priceStruct.Denom != "" || priceStruct.Amount != "") {
+		p.Denom = priceStruct.Denom
+		p.Amount = priceStruct.Amount
+		return nil
+	}
+
+	// Try to unmarshal as a string (e.g., "10090ulume")
+	var priceStr string
+	if err := json.Unmarshal(data, &priceStr); err == nil {
+		// Parse the coin string format: "10090ulume" -> amount="10090", denom="ulume"
+		p.Amount, p.Denom = parseCoinString(priceStr)
+		return nil
+	}
+
+	// If both fail, set empty values
+	p.Denom = ""
+	p.Amount = ""
+	return nil
+}
+
+// parseCoinString parses a coin string like "10090ulume" into amount and denom
+func parseCoinString(s string) (amount, denom string) {
+	if s == "" {
+		return "", ""
+	}
+	// Find where the numeric part ends
+	i := 0
+	for i < len(s) && (s[i] >= '0' && s[i] <= '9') {
+		i++
+	}
+	return s[:i], s[i:]
+}
+
+type Action struct {
+	Creator        string     `json:"creator"`
+	ActionID       string     `json:"actionID"`
+	ActionType     string     `json:"actionType"`
+	MetadataB64    string     `json:"metadata"`
+	Price          PriceField `json:"price"`
+	ExpirationTime string     `json:"expirationTime"`
+	State          string     `json:"state"`
+	BlockHeight    string     `json:"blockHeight"`
+	SuperNodes     []string   `json:"superNodes"`
 }
 
 func (c *Client) GetActions(ctx context.Context, actionType, actionState, nextKey string, limit int) (as []Action, newNextKey string, err error) {
@@ -201,7 +244,7 @@ func (c *Client) GetActions(ctx context.Context, actionType, actionState, nextKe
 		q.Set("pagination.key", nextKey)
 	}
 	var out ListActionsResponse
-	err = c.doJSON(ctx, http.MethodGet, "/LumeraProtocol/lumera/action/list_actions", q, &out)
+	err = c.doJSON(ctx, http.MethodGet, "/LumeraProtocol/lumera/action/v1/list_actions", q, &out)
 	if err != nil {
 		return nil, "", err
 	}

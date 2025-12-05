@@ -105,19 +105,19 @@
           {
             "name": "from",
             "in": "query",
-            "description": "Filter actions from timestamp",
+            "description": "Filter actions from block height",
             "schema": {
-              "type": "string",
-              "format": "date-time"
+              "type": "integer",
+              "format": "int64"
             }
           },
           {
             "name": "to",
             "in": "query",
-            "description": "Filter actions to timestamp",
+            "description": "Filter actions to block height",
             "schema": {
-              "type": "string",
-              "format": "date-time"
+              "type": "integer",
+              "format": "int64"
             }
           },
           {
@@ -219,7 +219,162 @@
         }
       }
     },
-    "/v1/version-matrix": {
+    "/v1/supernodes/sync": {
+      "post": {
+        "summary": "Trigger supernode sync and probe",
+        "description": "Manually trigger a sync and probe of all supernodes. Returns 202 if started, 204 if already running.",
+        "operationId": "triggerSupernodeSync",
+        "tags": [
+          "Supernodes"
+        ],
+        "responses": {
+          "202": {
+            "description": "Sync and probe started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "started"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Sync and probe already in progress"
+          }
+        }
+      }
+    },
+    "/v1/supernodes/unavailable": {
+      "get": {
+        "summary": "List unavailable supernodes",
+        "description": "Retrieve supernodes where status API is unavailable (isStatusApiAvailable=false), with optional state filtering",
+        "operationId": "listUnavailableSupernodes",
+        "tags": [
+          "Supernodes"
+        ],
+        "parameters": [
+          {
+            "name": "currentState",
+            "in": "query",
+            "description": "Filter by current state of supernodes",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "running",
+                "stopped",
+                "any"
+              ],
+              "default": "running"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response with list of unavailable supernodes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SupernodeDetail"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/supernodes/{id}/metrics": {
+      "get": {
+        "summary": "Get metrics for a specific supernode",
+        "description": "Retrieve detailed metrics and status information for a specific supernode by its account ID",
+        "operationId": "getSingleSupernodeMetrics",
+        "tags": [
+          "Supernodes"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Supernode account ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response with supernode metrics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SingleSupernodeMetrics"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid supernode ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Supernode not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/version/matrix": {
       "get": {
         "summary": "Get version compatibility matrix",
         "description": "Retrieve information about chain action versions, supernode capabilities, and compatibility",
@@ -286,10 +441,11 @@
             "description": "Current action state",
             "example": "committed"
           },
-          "timestamp": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Action timestamp"
+          "block_height": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Block height when action was created",
+            "example": 12345
           },
           "decoded": {
             "type": "object",
@@ -331,6 +487,15 @@
             "description": "Current action state",
             "example": "committed"
           },
+          "block_height": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Block height when action was created",
+            "example": 12345
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price"
+          },
           "timestamp": {
             "type": "string",
             "format": "date-time",
@@ -341,20 +506,34 @@
             "additionalProperties": true,
             "description": "Decoded action data"
           },
-          "superNodes": {
-            "type": "array",
-            "description": "List of SuperNode operator addresses associated with the action",
-            "items": {
-              "type": "string",
-              "example": "lumera1563uuzljqvpanh79w2tvymqsly73v9nwygda73"
-            }
+          "raw": {
+            "type": "string",
+            "description": "Base64 encoded raw bytes for unknown types"
           },
-          "cascade_layout": {
-            "$ref": "#/components/schemas/CascadeLEP1"
+          "super_nodes": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "SuperNode data associated with the action"
           },
           "schema_version": {
             "type": "string",
             "example": "v1.0"
+          }
+        }
+      },
+      "Price": {
+        "type": "object",
+        "description": "Price information for an action",
+        "properties": {
+          "denom": {
+            "type": "string",
+            "description": "Price denomination",
+            "example": "ulume"
+          },
+          "amount": {
+            "type": "string",
+            "description": "Price amount as string",
+            "example": "1000000"
           }
         }
       },
@@ -472,103 +651,226 @@
       },
       "VersionMatrixResponse": {
         "type": "object",
+        "description": "Version compatibility matrix showing distribution of supernode versions",
         "properties": {
-          "chain_action_versions": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ChainActionVersion"
-            }
-          },
-          "supernodes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SupernodeCapability"
-            }
-          },
-          "compatibility": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Compatibility"
-            }
-          },
-          "schema_version": {
+          "latest_version": {
             "type": "string",
-            "example": "v1.0"
-          }
-        }
-      },
-      "ChainActionVersion": {
-        "type": "object",
-        "properties": {
-          "action_type": {
-            "type": "string",
-            "description": "Type of chain action",
-            "example": "cascade"
-          },
-          "version": {
-            "type": "integer",
-            "description": "Version number",
-            "example": 1
-          }
-        }
-      },
-      "SupernodeCapability": {
-        "type": "object",
-        "properties": {
-          "node_id": {
-            "type": "string",
-            "description": "Supernode identifier",
-            "example": "sn-1"
-          },
-          "version": {
-            "type": "string",
-            "description": "Supernode software version",
+            "description": "The most common version across the network (heuristic for latest)",
             "example": "v2.3.0"
           },
-          "supports": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "boolean"
-            },
-            "description": "Supported LEPs (Lumera Enhancement Proposals)",
-            "example": {
-              "LEP1": true,
-              "LEP2": true
+          "versions": {
+            "type": "array",
+            "description": "List of versions and their statistics",
+            "items": {
+              "$ref": "#/components/schemas/VersionMatrixRow"
             }
           }
-        }
+        },
+        "required": [
+          "versions"
+        ]
       },
-      "Compatibility": {
+      "VersionMatrixRow": {
         "type": "object",
+        "description": "Statistics for a specific version",
         "properties": {
-          "node_id": {
+          "version": {
             "type": "string",
-            "description": "Supernode identifier"
+            "description": "Software version string",
+            "example": "v2.3.0"
           },
-          "verdict": {
-            "type": "string",
-            "enum": [
-              "full",
-              "partial",
-              "incompatible"
-            ],
-            "description": "Compatibility verdict",
-            "example": "full"
+          "nodes_total": {
+            "type": "integer",
+            "description": "Total number of supernodes running this version",
+            "example": 42
           },
-          "rationale": {
-            "type": "string",
-            "description": "Explanation of the verdict",
-            "example": "All required capabilities present"
+          "nodes_available": {
+            "type": "integer",
+            "description": "Number of supernodes with status API available",
+            "example": 40
+          },
+          "nodes_unavailable": {
+            "type": "integer",
+            "description": "Number of supernodes with status API unavailable",
+            "example": 2
+          },
+          "is_latest": {
+            "type": "boolean",
+            "description": "Whether this is the most common (latest) version",
+            "example": true
           }
-        }
+        },
+        "required": [
+          "version",
+          "nodes_total",
+          "nodes_available",
+          "nodes_unavailable",
+          "is_latest"
+        ]
       },
       "Error": {
         "type": "object",
+        "description": "Error response",
         "properties": {
           "error": {
             "type": "string",
             "description": "Error message",
-            "example": "not_found"
+            "example": "internal_error"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "SupernodeDetail": {
+        "type": "object",
+        "properties": {
+          "supernodeAccount": {
+            "type": "string",
+            "description": "Supernode account address"
+          },
+          "validatorAddress": {
+            "type": "string",
+            "description": "Validator address"
+          },
+          "validatorMoniker": {
+            "type": "string",
+            "description": "Validator moniker/name"
+          },
+          "currentState": {
+            "type": "string",
+            "description": "Current state of the supernode"
+          },
+          "ipAddress": {
+            "type": "string",
+            "description": "IP address of the supernode"
+          },
+          "p2pPort": {
+            "type": "integer",
+            "description": "P2P port number"
+          },
+          "protocolVersion": {
+            "type": "string",
+            "description": "Protocol version"
+          },
+          "isStatusApiAvailable": {
+            "type": "boolean",
+            "description": "Whether the status API is available"
+          }
+        }
+      },
+      "SingleSupernodeMetrics": {
+        "type": "object",
+        "description": "Detailed metrics and status information for a specific supernode",
+        "properties": {
+          "supernode_account": {
+            "type": "string",
+            "description": "Supernode account address",
+            "example": "lumera1abc..."
+          },
+          "validator_address": {
+            "type": "string",
+            "description": "Validator address"
+          },
+          "validator_moniker": {
+            "type": "string",
+            "description": "Validator moniker/name"
+          },
+          "current_state": {
+            "type": "string",
+            "description": "Current state of the supernode",
+            "example": "SUPERNODE_STATE_RUNNING"
+          },
+          "ip_address": {
+            "type": "string",
+            "description": "IP address of the supernode"
+          },
+          "p2p_port": {
+            "type": "integer",
+            "description": "P2P port number"
+          },
+          "protocol_version": {
+            "type": "string",
+            "description": "Protocol version",
+            "example": "1.0.0"
+          },
+          "actual_version": {
+            "type": "string",
+            "description": "Actual running version of the supernode software"
+          },
+          "cpu_usage_percent": {
+            "type": "number",
+            "format": "double",
+            "description": "CPU usage percentage"
+          },
+          "cpu_cores": {
+            "type": "integer",
+            "description": "Number of CPU cores"
+          },
+          "memory_total_gb": {
+            "type": "number",
+            "format": "double",
+            "description": "Total memory in GB"
+          },
+          "memory_used_gb": {
+            "type": "number",
+            "format": "double",
+            "description": "Used memory in GB"
+          },
+          "memory_usage_percent": {
+            "type": "number",
+            "format": "double",
+            "description": "Memory usage percentage"
+          },
+          "storage_total_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total storage in bytes"
+          },
+          "storage_used_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Used storage in bytes"
+          },
+          "storage_usage_percent": {
+            "type": "number",
+            "format": "double",
+            "description": "Storage usage percentage"
+          },
+          "hardware_summary": {
+            "type": "string",
+            "description": "Hardware summary information"
+          },
+          "peers_count": {
+            "type": "integer",
+            "description": "Number of connected peers"
+          },
+          "uptime_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Uptime in seconds"
+          },
+          "rank": {
+            "type": "integer",
+            "description": "Supernode rank"
+          },
+          "last_status_check": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of last status check"
+          },
+          "is_status_api_available": {
+            "type": "boolean",
+            "description": "Whether the status API is currently available"
+          },
+          "metrics_report": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Additional metrics report data"
+          },
+          "schema_version": {
+            "type": "string",
+            "example": "v1.0"
           }
         }
       }

@@ -48,3 +48,10 @@ func makeWeakETag(b []byte) string {
 	sum := sha256.Sum256(b)
 	return "W/\"" + hex.EncodeToString(sum[:8]) + "\""
 }
+
+// WriteJSONError writes a JSON error response with the specified status code
+func WriteJSONError(w http.ResponseWriter, status int, errorMsg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": errorMsg})
+}

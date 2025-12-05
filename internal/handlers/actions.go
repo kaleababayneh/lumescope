@@ -1,22 +1,25 @@
 package handlers
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"lumescope/internal/db"
 	"lumescope/internal/util"
 )
 
 type ActionItem struct {
-	ID        string      `json:"id"`
-	Type      string      `json:"type"`
-	Creator   string      `json:"creator"`
-	State     string      `json:"state"`
-	Timestamp time.Time   `json:"timestamp"`
-	Decoded   interface{} `json:"decoded,omitempty"`
-	Raw       string      `json:"raw,omitempty"` // base64 of raw bytes if unknown type
+	ID          string      `json:"id"`
+	Type        string      `json:"type"`
+	Creator     string      `json:"creator"`
+	State       string      `json:"state"`
+	BlockHeight int64       `json:"block_height"`
+	Decoded     interface{} `json:"decoded,omitempty"`
+	Raw         string      `json:"raw,omitempty"` // base64 of raw bytes if unknown type
 }
 
 type ActionsListResponse struct {
@@ -25,95 +28,206 @@ type ActionsListResponse struct {
 	SchemaVersion string       `json:"schema_version"`
 }
 
-func ListActions(w http.ResponseWriter, r *http.Request) {
-	// Parse filters (not used in stub)
-	_ = r.URL.Query().Get("type")
-	_ = r.URL.Query().Get("creator")
-	_ = r.URL.Query().Get("state")
-	_ = r.URL.Query().Get("from")
-	_ = r.URL.Query().Get("to")
+func ListActions(pool *db.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		queryValues := r.URL.Query()
 
-	// Pagination
-	limit := 50
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 && v <= 200 {
-			limit = v
+		filter := db.ActionsFilter{}
+
+		if typeStr := queryValues.Get("type"); typeStr != "" {
+			filterType := typeStr
+			filter.Type = &filterType
 		}
-	}
-	cursor := r.URL.Query().Get("cursor")
-	_ = cursor
+		if creatorStr := queryValues.Get("creator"); creatorStr != "" {
+			filterCreator := creatorStr
+			filter.Creator = &filterCreator
+		}
+		if stateStr := queryValues.Get("state"); stateStr != "" {
+			filterState := stateStr
+			filter.State = &filterState
+		}
 
-	now := time.Now().UTC()
-	items := make([]ActionItem, 0, limit)
-	for i := 0; i < limit; i++ {
-		items = append(items, ActionItem{
-			ID:        "act_" + strconv.Itoa(i+1),
-			Type:      "cascade", // example type
-			Creator:   "lumera1example...",
-			State:     "committed",
-			Timestamp: now.Add(-time.Duration(i) * time.Minute),
-			Decoded: map[string]interface{}{
-				"lep1": map[string]interface{}{
-					"root": "bafy...",
-					"pieces": 12,
-				},
-			},
-		})
-	}
+		limit := 50
+		if limitStr := queryValues.Get("limit"); limitStr != "" {
+			parsedLimit, err := strconv.Atoi(limitStr)
+			if err != nil {
+				util.WriteJSONError(w, http.StatusBadRequest, "invalid limit parameter")
+				return
+			}
+			if parsedLimit < 1 {
+				parsedLimit = 1
+			} else if parsedLimit > 200 {
+				parsedLimit = 200
+			}
+			limit = parsedLimit
+		}
+		filter.Limit = limit
 
-	resp := ActionsListResponse{
-		Items:         items,
-		NextCursor:    "", // empty in stub
-		SchemaVersion: "v1.0",
-	}
+		if fromStr := queryValues.Get("from"); fromStr != "" {
+			parsedFrom, err := strconv.ParseInt(fromStr, 10, 64)
+			if err != nil {
+				util.WriteJSONError(w, http.StatusBadRequest, "invalid from parameter: must be a block height")
+				return
+			}
+			filterFrom := parsedFrom
+			filter.FromHeight = &filterFrom
+		}
 
-	lm := time.Now().UTC()
-	util.WriteJSON(w, r, http.StatusOK, resp, &lm)
+		if toStr := queryValues.Get("to"); toStr != "" {
+			parsedTo, err := strconv.ParseInt(toStr, 10, 64)
+			if err != nil {
+				util.WriteJSONError(w, http.StatusBadRequest, "invalid to parameter: must be a block height")
+				return
+			}
+			filterTo := parsedTo
+			filter.ToHeight = &filterTo
+		}
+
+		if cursorStr := queryValues.Get("cursor"); cursorStr != "" {
+			decodedCursor, err := base64.StdEncoding.DecodeString(cursorStr)
+			if err != nil {
+				util.WriteJSONError(w, http.StatusBadRequest, "invalid cursor encoding")
+				return
+			}
+			var payload struct {
+				TS string `json:"ts"`
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(decodedCursor, &payload); err != nil || payload.TS == "" || payload.ID == "" {
+				util.WriteJSONError(w, http.StatusBadRequest, "invalid cursor format")
+				return
+			}
+			parsedCursorTS, err := time.Parse(time.RFC3339, payload.TS)
+			if err != nil {
+				util.WriteJSONError(w, http.StatusBadRequest, "invalid cursor timestamp")
+				return
+			}
+			parsedCursorTS = parsedCursorTS.UTC()
+			cursorTime := parsedCursorTS
+			cursorID := payload.ID
+			filter.CursorTS = &cursorTime
+			filter.CursorID = &cursorID
+		}
+
+		actions, hasMore, err := db.ListActionsFiltered(r.Context(), pool, filter)
+		if err != nil {
+			util.WriteJSONError(w, http.StatusInternalServerError, "failed to fetch actions")
+			return
+		}
+
+		items := make([]ActionItem, 0, len(actions))
+		for _, a := range actions {
+			item := ActionItem{
+				ID:          a.ActionID,
+				Type:        a.ActionType,
+				Creator:     a.Creator,
+				State:       a.State,
+				BlockHeight: a.BlockHeight,
+			}
+
+			// Add decoded metadata if available
+			if a.MetadataJSON != nil {
+				item.Decoded = a.MetadataJSON
+			} else if len(a.MetadataRaw) > 0 {
+				item.Raw = base64.StdEncoding.EncodeToString(a.MetadataRaw)
+			}
+
+			items = append(items, item)
+		}
+
+		resp := ActionsListResponse{
+			Items:         items,
+			SchemaVersion: "v1.0",
+		}
+
+		if hasMore && len(actions) > 0 {
+			last := actions[len(actions)-1]
+			cursorPayload := struct {
+				TS string `json:"ts"`
+				ID string `json:"id"`
+			}{
+				TS: last.CreatedAt.UTC().Format(time.RFC3339),
+				ID: last.ActionID,
+			}
+			cursorJSON, err := json.Marshal(cursorPayload)
+			if err != nil {
+				util.WriteJSONError(w, http.StatusInternalServerError, "failed to encode cursor")
+				return
+			}
+			resp.NextCursor = base64.StdEncoding.EncodeToString(cursorJSON)
+		}
+
+		lm := time.Now().UTC()
+		util.WriteJSON(w, r, http.StatusOK, resp, &lm)
+	}
 }
 
-func GetAction(w http.ResponseWriter, r *http.Request) {
-	id := actionIDFromPath(r.URL.Path)
-	if id == "" {
-		http.Error(w, `{"error":"bad_request"}`, http.StatusBadRequest)
-		return
-	}
+func GetAction(pool *db.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := actionIDFromPath(r.URL.Path)
+		if id == "" {
+			util.WriteJSONError(w, http.StatusBadRequest, "invalid action ID")
+			return
+		}
 
-	now := time.Now().UTC()
-	type CascadeLEP1 struct {
-		RootCID      string `json:"root_cid"`
-		PieceCount   int    `json:"piece_count"`
-		TotalSize    int64  `json:"total_size_bytes"`
-		PreviewMIME  string `json:"preview_mime"`
-	}
-	resp := struct {
-		ID            string       `json:"id"`
-		Type          string       `json:"type"`
-		Creator       string       `json:"creator"`
-		State         string       `json:"state"`
-		Timestamp     time.Time    `json:"timestamp"`
-		Decoded       interface{}  `json:"decoded"`
-		CascadeLayout CascadeLEP1  `json:"cascade_layout"`
-		SchemaVersion string       `json:"schema_version"`
-	}{
-		ID:        id,
-		Type:      "cascade",
-		Creator:   "lumera1example...",
-		State:     "committed",
-		Timestamp: now,
-		Decoded: map[string]interface{}{
-			"some_field": "value",
-		},
-		CascadeLayout: CascadeLEP1{
-			RootCID:     "bafy...",
-			PieceCount:  12,
-			TotalSize:   1_048_576,
-			PreviewMIME: "image/png",
-		},
-		SchemaVersion: "v1.0",
-	}
+		action, err := db.GetActionByID(r.Context(), pool, id)
+		if err != nil {
+			if err == db.ErrNotFound {
+				util.WriteJSONError(w, http.StatusNotFound, "action not found")
+				return
+			}
+			util.WriteJSONError(w, http.StatusInternalServerError, "failed to fetch action")
+			return
+		}
 
-	lm := time.Now().UTC()
-	util.WriteJSON(w, r, http.StatusOK, resp, &lm)
+		// Build response with action details
+		resp := struct {
+			ID            string      `json:"id"`
+			Type          string      `json:"type"`
+			Creator       string      `json:"creator"`
+			State         string      `json:"state"`
+			BlockHeight   int64       `json:"block_height"`
+			Price         Price       `json:"price"`
+			Timestamp     time.Time   `json:"timestamp"`
+			Decoded       interface{} `json:"decoded,omitempty"`
+			Raw           string      `json:"raw,omitempty"`
+			SuperNodes    interface{} `json:"super_nodes,omitempty"`
+			SchemaVersion string      `json:"schema_version"`
+		}{
+			ID:          action.ActionID,
+			Type:        action.ActionType,
+			Creator:     action.Creator,
+			State:       action.State,
+			BlockHeight: action.BlockHeight,
+			Price: Price{
+				Denom:  action.PriceDenom,
+				Amount: action.PriceAmount,
+			},
+			Timestamp:     time.Unix(action.BlockHeight, 0).UTC(),
+			SchemaVersion: "v1.0",
+		}
+
+		// Add decoded metadata if available
+		if action.MetadataJSON != nil {
+			resp.Decoded = action.MetadataJSON
+		} else if len(action.MetadataRaw) > 0 {
+			// If no decoded JSON, include raw bytes as base64
+			resp.Raw = base64.StdEncoding.EncodeToString(action.MetadataRaw)
+		}
+
+		// Add SuperNodes if available
+		if action.SuperNodes != nil {
+			resp.SuperNodes = action.SuperNodes
+		}
+
+		lm := time.Now().UTC()
+		util.WriteJSON(w, r, http.StatusOK, resp, &lm)
+	}
+}
+
+type Price struct {
+	Denom  string `json:"denom"`
+	Amount string `json:"amount"`
 }
 
 func actionIDFromPath(path string) string {

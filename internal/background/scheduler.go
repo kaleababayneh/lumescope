@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"lumescope/internal/config"
@@ -23,6 +24,8 @@ type Runner struct {
 	Lumera *lclient.Client
 
 	validatorMonikers map[string]string
+	syncRunning       bool
+	syncMu            sync.Mutex
 }
 
 func NewRunner(cfg config.Config, pool *db.Pool, lumera *lclient.Client) *Runner {
@@ -228,6 +231,36 @@ func (r *Runner) syncActions(ctx context.Context) error {
 	return nil
 }
 
+// TriggerSyncAndProbe manually triggers a sync+probe run if not already in progress.
+// Returns true if the run was started, false if already running.
+func (r *Runner) TriggerSyncAndProbe(ctx context.Context) bool {
+	r.syncMu.Lock()
+	if r.syncRunning {
+		r.syncMu.Unlock()
+		return false
+	}
+	r.syncRunning = true
+	r.syncMu.Unlock()
+
+	// Run sync+probe asynchronously
+	go func() {
+		defer func() {
+			r.syncMu.Lock()
+			r.syncRunning = false
+			r.syncMu.Unlock()
+		}()
+
+		if err := r.syncSupernodes(ctx); err != nil {
+			log.Printf("manual sync error: %v", err)
+		}
+		if err := r.probeSupernodes(ctx); err != nil {
+			log.Printf("manual probe error: %v", err)
+		}
+	}()
+
+	return true
+}
+
 func (r *Runner) probeSupernodes(ctx context.Context) error {
 	targets, err := db.ListKnownSupernodes(ctx, r.DB)
 	if err != nil {
@@ -309,6 +342,7 @@ func (r *Runner) probeSupernodes(ctx context.Context) error {
 			Rank:                 ptrI32(status.Rank),
 			LastStatusCheck:      &now,
 			IsStatusAPIAvailable: status.Available,
+			ProbeTimeUTC:         now,
 		}
 		if err := db.UpdateSupernodeProbeData(ctx, r.DB, sn); err != nil {
 			log.Printf("probe update %s: %v", t.SupernodeAccount, err)

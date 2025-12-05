@@ -38,7 +38,7 @@ func main() {
 	runner := background.NewRunner(cfg, pool, lc)
 	runner.Start(bgCtx)
 
-	r := server.NewRouter(cfg)
+	r := server.NewRouter(cfg, pool, runner)
 
 	srv := &http.Server{
 		Addr:              ":" + cfg.Port,

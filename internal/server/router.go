@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"lumescope/internal/config"
+	"lumescope/internal/db"
 	"lumescope/internal/handlers"
 )
 
 // NewRouter builds the HTTP router using only net/http ServeMux and stdlib middleware.
-func NewRouter(cfg config.Config) http.Handler {
+func NewRouter(cfg config.Config, pool *db.Pool, syncTrigger handlers.SyncTrigger) http.Handler {
 	mux := http.NewServeMux()
 
 	// Health
@@ -39,7 +40,7 @@ func NewRouter(cfg config.Config) http.Handler {
 			methodNotAllowed(w)
 			return
 		}
-		handlers.ListActions(w, r)
+		handlers.ListActions(pool)(w, r)
 	})
 
 	// Actions detail: /v1/actions/{id}
@@ -54,7 +55,16 @@ func NewRouter(cfg config.Config) http.Handler {
 			return
 		}
 		// Delegate to handler; it will parse id from path as well.
-		handlers.GetAction(w, r)
+		handlers.GetAction(pool)(w, r)
+	})
+
+	mux.HandleFunc("/v1/supernodes/sync", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST, OPTIONS")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		handlers.TriggerSupernodeSync(syncTrigger)(w, r)
 	})
 
 	mux.HandleFunc("/v1/supernodes/metrics", func(w http.ResponseWriter, r *http.Request) {
@@ -62,15 +72,38 @@ func NewRouter(cfg config.Config) http.Handler {
 			methodNotAllowed(w)
 			return
 		}
-		handlers.SupernodeMetrics(w, r)
+		handlers.ListSupernodesMetrics(pool)(w, r)
 	})
 
-	mux.HandleFunc("/v1/version-matrix", func(w http.ResponseWriter, r *http.Request) {
+	// Supernode detail metrics: /v1/supernodes/{id}/metrics
+	mux.HandleFunc("/v1/supernodes/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 			return
 		}
-		handlers.VersionMatrix(w, r)
+		// Check if path ends with /metrics
+		if strings.HasSuffix(r.URL.Path, "/metrics") {
+			handlers.GetSupernodeMetrics(pool)(w, r)
+			return
+		}
+		// If not a metrics request, return 404
+		http.NotFound(w, r)
+	})
+
+	mux.HandleFunc("/v1/supernodes/unavailable", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		handlers.ListUnavailableSupernodes(pool)(w, r)
+	})
+
+	mux.HandleFunc("/v1/version/matrix", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		handlers.VersionMatrix(pool)(w, r)
 	})
 
 	// OpenAPI spec endpoint

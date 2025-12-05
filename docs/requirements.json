@@ -1,0 +1,189 @@
+{
+  "project": "LumeScope (Lumera InfoServer) — read-only aggregator for Actions, Cascade, and SuperNodes",
+  "project_overview": {
+    "mission_statement": "Provide a neutral, fast, and accurate read-only API that decodes Actions, joins Cascade data, and aggregates SuperNode metrics—so Lumera clients stay lightweight and responsive.",
+    "problem_statement": "Browsers and thin clients cannot efficiently decode protobuf Action metadata, query Cascade artifacts, or fan-out to every SuperNode for metrics without performance and reliability penalties.",
+    "target_audience": "Portal/Explorer teams, Hub and dApps, SuperNode/validator operators, analytics providers.",
+    "kpis_success_metrics": "API p95 < 200ms for hot reads; index freshness ≤ 30s; >99.9% uptime; <1% decode mismatches; adoption by Portal & Hub; 3+ third-party deployments."
+  },
+  "users_and_stories": {
+    "user_personas": [
+      {
+        "name": "Explorer Developer",
+        "description": "Builds a Lumera network explorer and needs parsed Action details and Cascade previews.",
+        "goals": "Fetch decoded Actions quickly; filter by type/creator; show previewable Cascade info.",
+        "pain_points": "Maintaining protobuf parsers; inconsistent LCD data; expensive fan-out to SNs."
+      },
+      {
+        "name": "dApp Engineer (Hub)",
+        "description": "Implements Lumera-specific flows; wants simple APIs for lists and details.",
+        "goals": "Query one endpoint for Actions + Cascade metadata; see SN health/compatibility.",
+        "pain_points": "Latency, schema drift, lack of authoritative compatibility matrix."
+      },
+      {
+        "name": "Infra Operator",
+        "description": "Runs public endpoints; wants to host their own mirror.",
+        "goals": "Easy deployment; config-driven crawling; metrics/alerts.",
+        "pain_points": "Complex indexing stacks, unclear SLOs, poor documentation."
+      }
+    ],
+    "user_stories": [
+      "As an explorer dev, I can GET /v1/actions?type=cascade to list recent Actions with decoded JSON.",
+      "As a dApp engineer, I can GET /v1/actions/{id} to see decoded metadata plus Cascade layout info.",
+      "As a dApp engineer, I can GET /v1/supernodes/metrics to render a health dashboard without pinging each SN.",
+      "As an infra operator, I can deploy LumeScope with a single Helm chart and get Prometheus metrics."
+    ],
+    "epics": [
+      {
+        "epic_name": "Action Indexing & Decoding",
+        "associated_stories": [
+          "Ingest Actions from chain and decode metadata via generated codecs.",
+          "Expose filterable endpoints with pagination and ETag caching."
+        ]
+      },
+      {
+        "epic_name": "Cascade Join & Views",
+        "associated_stories": [
+          "Resolve LEP1 index/layout; attach resolved view to Action responses.",
+          "Offer lightweight previews (sizes, MIME, piece counts) without heavy downloads."
+        ]
+      },
+      {
+        "epic_name": "SuperNode Metrics & Compatibility",
+        "associated_stories": [
+          "Scrape SN metrics endpoints, normalize, and expose rollups/time series.",
+          "Compute and serve LEP2 compatibility matrix and version map."
+        ]
+      },
+      {
+        "epic_name": "Ops & Distribution",
+        "associated_stories": [
+          "Ship Docker/Helm; publish OpenAPI/GraphQL schemas; add Prom/Grafana dashboards."
+        ]
+      }
+    ],
+    "acceptance_criteria": [
+      {
+        "feature_story": "GET /v1/actions (decoded list)",
+        "criteria": [
+          "Returns decoded JSON for known Action types and raw bytes for unknown types.",
+          "Supports filters: type, creator, time range, state; paginated with stable sort.",
+          "ETag/Last-Modified supported; Redis-backed cache hit ratio > 80% on hot paths."
+        ]
+      },
+      {
+        "feature_story": "GET /v1/actions/{id} (joined view)",
+        "criteria": [
+          "Includes decoded metadata, Cascade resolved layout (LEP1), and minimal file descriptors.",
+          "Response time p95 < 300ms for cached entries; < 800ms cold.",
+          "Schema version is included to prevent client drift."
+        ]
+      },
+      {
+        "feature_story": "GET /v1/supernodes/metrics",
+        "criteria": [
+          "Aggregates from all reachable SN endpoints with per-node freshness timestamps.",
+          "Exposes rollups (availability, RTT, queue depth) and last scrape status.",
+          "p95 response < 400ms from cache; scraper lag ≤ 30s."
+        ]
+      },
+      {
+        "feature_story": "GET /v1/version/matrix (LEP2)",
+        "criteria": [
+          "Returns current chain action_versions and observed SN capabilities/versions.",
+          "Provides compatibility verdicts: full/partial/incompatible with rationale."
+        ]
+      }
+    ]
+  },
+  "requirements": {
+    "mission": "Centralize heavy parsing and high-fanout reads into a single, neutral, OSS service for Lumera.",
+    "problem": "Client apps waste resources parsing protobufs and scraping many SN endpoints; results are inconsistent and slow.",
+    "target_audience": "Builders of Lumera UIs/APIs, infra operators, analytics platforms.",
+    "mvp_features": [
+      "Chain follower with Action ingestion (gRPC+WS).",
+      "Protobuf codec registry (generated) with safe fallbacks.",
+      "Cascade LEP1 resolver and joined Action detail endpoint.",
+      "SuperNode metrics scraper + rollup endpoint.",
+      "REST API v1 with pagination, ETag, rate limits.",
+      "Prometheus metrics, basic alerts, Docker image."
+    ],
+    "extended_features": [
+      "GraphQL facade for rich querying.",
+      "Time-series (TSDB) metrics with downsampling.",
+      "Historical backfill and reorg-tolerant cursoring.",
+      "Pluggable auth (API keys/JWT) for rate-tiered public mirrors.",
+      "Webhooks/SSE for Action-created and SN-state-changed events.",
+      "Multi-network support (devnet/testnet/mainnet) via config."
+    ],
+    "use_case_flows": [
+      {
+        "title": "Explorer lists latest Cascade Actions",
+        "preconditions": ["Indexer running; Redis hot; chain reachable"],
+        "steps": [
+          "GET /v1/actions?type=cascade&limit=50",
+          "Client caches by ETag and paginates",
+          "On click, GET /v1/actions/{id} for joined detail"
+        ],
+        "postconditions": ["UI shows decoded metadata and Cascade layout without client-side parsing"]
+      },
+      {
+        "title": "Hub fetches SN health for routing",
+        "preconditions": ["Scraper fresh <30s; SN endpoints mostly reachable"],
+        "steps": [
+          "GET /v1/supernodes/metrics",
+          "Optionally GET /v1/version/matrix for capability checks"
+        ],
+        "postconditions": ["Hub selects healthy/compatible SNs; no client fan-out to nodes"]
+      },
+      {
+        "title": "Third-party runs their own LumeScope",
+        "preconditions": ["Docker/Helm; RPCs configured"],
+        "steps": [
+          "Deploy Helm chart; set CHAIN_ID/RPC URLs",
+          "Verify /healthz, check Prom metrics",
+          "Point Portal/Hub to their instance"
+        ],
+        "postconditions": ["Independent mirror serving identical APIs"]
+      }
+    ],
+    "non_functional_requirements": {
+      "performance": "Hot-list p95 < 200ms; detail p95 < 300ms; scraper lag ≤ 30s; indexer lag ≤ 1 block.",
+      "security": "Read-only APIs by default; rate limiting; CORS allowlist; no secrets in responses; input validation and schema pinning.",
+      "scalability": "Horizontally scalable API and scraper; partitionable ingestion; Redis and DB can be clustered; multi-network by config."
+    }
+  },
+  "design_checkpoints": {
+    "architecture_styles": [
+      "Event-driven ingestion (pull-based follower + scheduled scrapes)",
+      "Layered architecture (ingest → decode/join → API)",
+      "Cache-aside with Redis and ETag"
+    ],
+    "tech_stack_components": [
+      "Go or TypeScript (NestJS) services",
+      "gRPC/WebSocket chain follower",
+      "Protobuf codegen (Go/TS) for codecs",
+      "PostgreSQL + Redis; optional TimescaleDB/ClickHouse for metrics",
+      "Prometheus/Grafana; OpenTelemetry traces",
+      "OpenAPI v3; optional GraphQL"
+    ],
+    "required_diagrams": [
+      "C4: System Context (clients ↔ LumeScope ↔ chain & SNs)",
+      "C4: Container diagram (ingester, scraper, API, cache, DB)",
+      "Sequence: Action ingest & decode; SN scrape & rollup",
+      "Deployment: single- and multi-replica with Helm"
+    ]
+  },
+  "implementation_checkpoints": {
+    "code_modules_priority": [
+      "proto-codecs package (generated; test fixtures)",
+      "action-ingester (gRPC/WS follower with reorg handling)",
+      "decoder/joiner (LEP1 resolver + typed JSON views)",
+      "supernode-scraper (metrics, capabilities, version map)",
+      "rest-api (v1 endpoints, pagination, ETag, rate limit)",
+      "observability (Prom metrics, healthz, readiness)",
+      "packaging (Dockerfile, Helm chart, example configs)"
+    ],
+    "test_coverage_goals": "≥80% for codec/decoder; golden-file tests for decoding; contract tests for REST; load test targets for p95; chaos tests for partial SN failures."
+  }
+}
