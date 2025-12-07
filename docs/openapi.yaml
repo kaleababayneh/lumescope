@@ -8,12 +8,8 @@ info:
     the Lumera network's distributed storage operations.
 
 servers:
-  - url: http://localhost:{port}
-    description: Local development server
-    variables:
-      port:
-        default: "18080"
-        description: HTTP server port
+  - url: /
+    description: Current server
 
 paths:
   /healthz:
