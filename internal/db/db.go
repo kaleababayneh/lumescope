@@ -103,9 +103,12 @@ func Bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
 			"expirationTime" BIGINT,
 			"metadataRaw"   BYTEA,
 			"metadataJSON"  JSONB,
+			"superNodes"    JSONB,
 			"createdAt"     TIMESTAMP NOT NULL DEFAULT now(),
 			"updatedAt"     TIMESTAMP NOT NULL DEFAULT now()
 		)`,
+		// Migration for existing actions table: add superNodes column if it doesn't exist
+		`ALTER TABLE actions ADD COLUMN IF NOT EXISTS "superNodes" JSONB`,
 	}
 	for _, s := range stmts {
 		if _, err := pool.Exec(ctx, s); err != nil {
@@ -353,6 +356,7 @@ func listSupernodeMetricsFiltered(ctx context.Context, pool *pgxpool.Pool, f Sup
 	sb.WriteString(`SELECT "supernodeAccount","validatorAddress","validatorMoniker","currentState","currentStateHeight","ipAddress","p2pPort","protocolVersion","actualVersion","cpuUsagePercent","cpuCores","memoryTotalGb","memoryUsedGb","memoryUsagePercent","storageTotalBytes","storageUsedBytes","storageUsagePercent","hardwareSummary","peersCount","uptimeSeconds",rank,"registeredServices","runningTasks","stateHistory",evidence,"prevIpAddresses","lastStatusCheck","isStatusApiAvailable","metricsReport","lastSuccessfulProbe","failedProbeCounter",COALESCE("lastKnownActualVersion",'')
 		FROM supernodes`)
 
+	// Legacy CurrentState filter for "running"/"stopped"/"any"
 	switch f.CurrentState {
 	case "running":
 		conditions = append(conditions, `"currentState" != 'SUPERNODE_STATE_STOPPED'`)
@@ -360,11 +364,26 @@ func listSupernodeMetricsFiltered(ctx context.Context, pool *pgxpool.Pool, f Sup
 		conditions = append(conditions, `"currentState" = 'SUPERNODE_STATE_STOPPED'`)
 	}
 
+	// New ChainState filter for exact currentState enum values
+	if f.ChainState != nil {
+		conditions = append(conditions, fmt.Sprintf(`"currentState" = $%d`, argPos))
+		args = append(args, *f.ChainState)
+		argPos++
+	}
+
+	// Status filter: "available" now means all 3 ports are open
 	switch f.Status {
 	case "available":
+		// Filter for supernodes where all 3 ports are available:
+		// 1. status API (8002) is available - stored in isStatusApiAvailable column
+		// 2. port1 (from ipAddress) is open - stored in metricsReport->'ports'->>'port1'
+		// 3. p2p port (4445) is open - stored in metricsReport->'ports'->>'p2p'
 		conditions = append(conditions, `"isStatusApiAvailable" = true`)
+		conditions = append(conditions, `"metricsReport"->'ports'->>'port1' = 'true'`)
+		conditions = append(conditions, `"metricsReport"->'ports'->>'p2p' = 'true'`)
 	case "unavailable":
-		conditions = append(conditions, `"isStatusApiAvailable" = false`)
+		// Unavailable means at least one of the 3 ports is not open
+		conditions = append(conditions, `("isStatusApiAvailable" = false OR "metricsReport"->'ports'->>'port1' != 'true' OR "metricsReport"->'ports'->>'p2p' != 'true')`)
 	}
 
 	if f.Version != nil {
@@ -567,8 +586,9 @@ type SupernodeDB struct {
 }
 
 type SupernodeMetricsFilter struct {
-	CurrentState  string
-	Status        string
+	CurrentState  string   // "running", "stopped", "any" - legacy filter on running state
+	ChainState    *string  // New: exact match on currentState column (e.g., "SUPERNODE_STATE_ACTIVE")
+	Status        string   // "available" (all 3 ports), "unavailable", "any"
 	Version       *string
 	MinFailed     int
 	Limit         int
@@ -918,3 +938,45 @@ func ListVersionMatrix(ctx context.Context, pool *pgxpool.Pool) ([]VersionRow, e
 
 // ErrNotFound sentinel
 var ErrNotFound = errors.New("not found")
+
+// HardwareStats holds aggregated hardware statistics for available supernodes
+type HardwareStats struct {
+	TotalCPUCores       int64 `json:"total_cpu_cores"`
+	TotalMemoryGb       float64 `json:"total_memory_gb"`
+	TotalStorageBytes   int64 `json:"total_storage_bytes"`
+	UsedStorageBytes    int64 `json:"used_storage_bytes"`
+	AvailableSupernodes int64 `json:"available_supernodes"`
+}
+
+// GetAggregatedHardwareStats returns aggregated hardware statistics for fully available supernodes.
+// A supernode is considered "fully available" when:
+// 1. isStatusApiAvailable = true (status API port 8002 is open)
+// 2. metricsReport->'ports'->>'port1' = 'true' (port1 from ipAddress is open)
+// 3. metricsReport->'ports'->>'p2p' = 'true' (P2P port 4445 is open)
+// 4. currentState != 'SUPERNODE_STATE_STOPPED' (node is not stopped on-chain)
+func GetAggregatedHardwareStats(ctx context.Context, pool *pgxpool.Pool) (*HardwareStats, error) {
+	query := `SELECT
+		COALESCE(SUM("cpuCores"), 0) AS total_cpu_cores,
+		COALESCE(SUM("memoryTotalGb"), 0) AS total_memory_gb,
+		COALESCE(SUM("storageTotalBytes"), 0) AS total_storage_bytes,
+		COALESCE(SUM("storageUsedBytes"), 0) AS used_storage_bytes,
+		COUNT(*) AS available_supernodes
+	FROM supernodes
+	WHERE "isStatusApiAvailable" = true
+		AND "metricsReport"->'ports'->>'port1' = 'true'
+		AND "metricsReport"->'ports'->>'p2p' = 'true'
+		AND "currentState" != 'SUPERNODE_STATE_STOPPED'`
+
+	var stats HardwareStats
+	err := pool.QueryRow(ctx, query).Scan(
+		&stats.TotalCPUCores,
+		&stats.TotalMemoryGb,
+		&stats.TotalStorageBytes,
+		&stats.UsedStorageBytes,
+		&stats.AvailableSupernodes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &stats, nil
+}

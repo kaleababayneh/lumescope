@@ -59,6 +59,72 @@ curl -s http://localhost:18080/v1/actions | jq .
 
 The server bootstraps DB tables automatically on first start.
 
+## Quick Start (Docker)
+
+LumeScope provides a single-container Docker image that runs both PostgreSQL and the LumeScope application. This is the easiest way to get started.
+
+1) Build the Docker image:
+
+```bash
+docker build -t lumescope .
+```
+
+2) Run the container:
+
+```bash
+docker run -d \
+  --name lumescope \
+  -p 18080:18080 \
+  -p 5432:5432 \
+  -e LUMERA_API_BASE=http://your-lumera-node:1317 \
+  lumescope
+```
+
+3) Verify:
+
+```bash
+curl -i http://localhost:18080/healthz
+curl -i http://localhost:18080/readyz
+curl -s http://localhost:18080/v1/actions | jq .
+```
+
+**Environment variables:**
+
+You can override any configuration via `-e` flags:
+
+```bash
+docker run -d \
+  --name lumescope \
+  -p 18080:18080 \
+  -e PORT=18080 \
+  -e POSTGRES_DB=lumescope \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e LUMERA_API_BASE=http://your-lumera-node:1317 \
+  -e CORS_ALLOW_ORIGINS="*" \
+  lumescope
+```
+
+**Persisting data:**
+
+To persist PostgreSQL data across container restarts, mount a volume:
+
+```bash
+docker run -d \
+  --name lumescope \
+  -p 18080:18080 \
+  -v lumescope_data:/var/lib/postgresql/data \
+  -e LUMERA_API_BASE=http://your-lumera-node:1317 \
+  lumescope
+```
+
+**Stopping the container:**
+
+```bash
+docker stop lumescope
+docker rm lumescope
+```
+
 ## Configuration
 
 Configuration can be provided via environment variables or by creating a `.env` file in the project root. The `.env` file is loaded automatically if present.

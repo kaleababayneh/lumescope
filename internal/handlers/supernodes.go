@@ -45,6 +45,7 @@ type SingleSupernodeMetricsResponse struct {
 }
 
 type SupernodeMetricsListResponse struct {
+	Total         int                              `json:"total"`
 	Nodes         []SingleSupernodeMetricsResponse `json:"nodes"`
 	NextCursor    string                           `json:"next_cursor,omitempty"`
 	SchemaVersion string                           `json:"schema_version"`
@@ -72,21 +73,30 @@ func TriggerSupernodeSync(trigger SyncTrigger) http.HandlerFunc {
 	}
 }
 
+// validChainStates defines the allowed values for the currentState query parameter
+var validChainStates = map[string]bool{
+	"SUPERNODE_STATE_UNSPECIFIED": true,
+	"SUPERNODE_STATE_ACTIVE":      true,
+	"SUPERNODE_STATE_DISABLED":    true,
+	"SUPERNODE_STATE_STOPPED":     true,
+	"SUPERNODE_STATE_PENALIZED":   true,
+}
+
 func ListSupernodesMetrics(pool *db.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 
-		currentState := query.Get("currentState")
-		if currentState == "" {
-			currentState = "running"
-		}
-		switch currentState {
-		case "running", "stopped", "any":
-		default:
-			util.WriteJSONError(w, http.StatusBadRequest, "invalid currentState parameter: must be 'running', 'stopped', or 'any'")
-			return
+		// Parse currentState parameter - now accepts exact chain state enum values
+		var chainState *string
+		if val := query.Get("currentState"); val != "" {
+			if !validChainStates[val] {
+				util.WriteJSONError(w, http.StatusBadRequest, "invalid currentState parameter: must be one of 'SUPERNODE_STATE_UNSPECIFIED', 'SUPERNODE_STATE_ACTIVE', 'SUPERNODE_STATE_DISABLED', 'SUPERNODE_STATE_STOPPED', 'SUPERNODE_STATE_PENALIZED'")
+				return
+			}
+			chainState = &val
 		}
 
+		// Parse status parameter - "available" means all 3 ports are open
 		status := query.Get("status")
 		if status == "" {
 			status = "any"
@@ -145,7 +155,8 @@ func ListSupernodesMetrics(pool *db.Pool) http.HandlerFunc {
 		}
 
 		filter := db.SupernodeMetricsFilter{
-			CurrentState:  currentState,
+			CurrentState:  "any", // Use "any" for legacy filter since we're using ChainState now
+			ChainState:    chainState,
 			Status:        status,
 			Version:       version,
 			MinFailed:     minFailed,
@@ -216,6 +227,7 @@ func ListSupernodesMetrics(pool *db.Pool) http.HandlerFunc {
 		}
 
 		response := SupernodeMetricsListResponse{
+			Total:         len(nodes),
 			Nodes:         nodes,
 			SchemaVersion: "v1.0",
 		}
@@ -351,4 +363,51 @@ func supernodeIDFromPath(path string) string {
 		return ""
 	}
 	return s
+}
+
+// SupernodeStatsResponse represents aggregated hardware statistics for available supernodes
+type SupernodeStatsResponse struct {
+	TotalCPUCores            int64   `json:"total_cpu_cores"`
+	TotalMemoryGb            float64 `json:"total_memory_gb"`
+	TotalStorageBytes        int64   `json:"total_storage_bytes"`
+	UsedStorageBytes         int64   `json:"used_storage_bytes"`
+	AvailableStorageBytes    int64   `json:"available_storage_bytes"`
+	StorageUsedPercent       float64 `json:"storage_used_percent"`
+	StorageAvailablePercent  float64 `json:"storage_available_percent"`
+	AvailableSupernodes      int64   `json:"available_supernodes"`
+	SchemaVersion            string  `json:"schema_version"`
+}
+
+// GetSupernodeStats returns aggregated hardware statistics for fully available supernodes
+func GetSupernodeStats(pool *db.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		stats, err := db.GetAggregatedHardwareStats(r.Context(), pool)
+		if err != nil {
+			util.WriteJSONError(w, http.StatusInternalServerError, "failed to fetch hardware stats")
+			return
+		}
+
+		// Calculate derived values
+		availableStorageBytes := stats.TotalStorageBytes - stats.UsedStorageBytes
+		var storageUsedPercent, storageAvailablePercent float64
+		if stats.TotalStorageBytes > 0 {
+			storageUsedPercent = float64(stats.UsedStorageBytes) / float64(stats.TotalStorageBytes) * 100
+			storageAvailablePercent = float64(availableStorageBytes) / float64(stats.TotalStorageBytes) * 100
+		}
+
+		response := SupernodeStatsResponse{
+			TotalCPUCores:           stats.TotalCPUCores,
+			TotalMemoryGb:           stats.TotalMemoryGb,
+			TotalStorageBytes:       stats.TotalStorageBytes,
+			UsedStorageBytes:        stats.UsedStorageBytes,
+			AvailableStorageBytes:   availableStorageBytes,
+			StorageUsedPercent:      storageUsedPercent,
+			StorageAvailablePercent: storageAvailablePercent,
+			AvailableSupernodes:     stats.AvailableSupernodes,
+			SchemaVersion:           "v1.0",
+		}
+
+		now := time.Now().UTC()
+		util.WriteJSON(w, r, http.StatusOK, response, &now)
+	}
 }

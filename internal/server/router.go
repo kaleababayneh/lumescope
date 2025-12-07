@@ -75,6 +75,14 @@ func NewRouter(cfg config.Config, pool *db.Pool, syncTrigger handlers.SyncTrigge
 		handlers.ListSupernodesMetrics(pool)(w, r)
 	})
 
+	mux.HandleFunc("/v1/supernodes/stats", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		handlers.GetSupernodeStats(pool)(w, r)
+	})
+
 	// Supernode detail metrics: /v1/supernodes/{id}/metrics
 	mux.HandleFunc("/v1/supernodes/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

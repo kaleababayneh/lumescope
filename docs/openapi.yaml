@@ -61,9 +61,13 @@ paths:
       parameters:
         - name: type
           in: query
-          description: Filter by action type (e.g., cascade, transfer)
+          description: Filter by action type
           schema:
             type: string
+            enum:
+              - ACTION_TYPE_UNSPECIFIED
+              - ACTION_TYPE_CASCADE
+              - ACTION_TYPE_SENSE
         - name: creator
           in: query
           description: Filter by creator address
@@ -71,9 +75,13 @@ paths:
             type: string
         - name: state
           in: query
-          description: Filter by action state (e.g., committed)
+          description: Filter by action state
           schema:
             type: string
+            enum:
+              - ACTION_STATE_UNSPECIFIED
+              - ACTION_STATE_PENDING
+              - ACTION_STATE_DONE
         - name: from
           in: query
           description: Filter actions from block height
@@ -142,6 +150,59 @@ paths:
       operationId: getSupernodeMetrics
       tags:
         - Supernodes
+      parameters:
+        - name: currentState
+          in: query
+          description: |
+            Filter by the on-chain state of supernodes. Uses exact enum values from the Lumera chain.
+          schema:
+            type: string
+            enum:
+              - SUPERNODE_STATE_UNSPECIFIED
+              - SUPERNODE_STATE_ACTIVE
+              - SUPERNODE_STATE_DISABLED
+              - SUPERNODE_STATE_STOPPED
+              - SUPERNODE_STATE_PENALIZED
+        - name: status
+          in: query
+          description: |
+            Filter by availability status. When 'available', returns only supernodes where all 3 ports are open:
+            - Status API (port 8002)
+            - Port1 (from ipAddress)
+            - P2P port (4445)
+            When 'unavailable', returns supernodes where at least one port is not open.
+          schema:
+            type: string
+            enum:
+              - available
+              - unavailable
+              - any
+            default: any
+        - name: version
+          in: query
+          description: Filter by supernode version
+          schema:
+            type: string
+        - name: minFailedProbeCounter
+          in: query
+          description: Minimum failed probe counter value
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          description: Maximum number of items to return (1-200)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+        - name: cursor
+          in: query
+          description: Pagination cursor for next page (base64 encoded JSON with account)
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -149,6 +210,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SupernodeMetricsResponse'
+        '400':
+          description: Invalid query parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
 
   /v1/supernodes/sync:
     post:
@@ -251,6 +318,32 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1/supernodes/stats:
+    get:
+      summary: Get aggregated supernode hardware statistics
+      description: |
+        Retrieve aggregated hardware statistics for fully available supernodes.
+        A supernode is considered "fully available" when all three ports are open:
+        - Status API (port 8002)
+        - Port1 (from ipAddress)
+        - P2P port (4445)
+      operationId: getSupernodeStats
+      tags:
+        - Supernodes
+      responses:
+        '200':
+          description: Successful response with aggregated hardware stats
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupernodeStatsResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1/version/matrix:
     get:
       summary: Get version compatibility matrix
@@ -268,6 +361,55 @@ paths:
 
 components:
   schemas:
+    SupernodeStatsResponse:
+      type: object
+      description: Aggregated hardware statistics for fully available supernodes
+      properties:
+        total_cpu_cores:
+          type: integer
+          format: int64
+          description: Sum of CPU cores across all fully available supernodes
+          example: 256
+        total_memory_gb:
+          type: number
+          format: double
+          description: Sum of total memory (GB) across all fully available supernodes
+          example: 1024.5
+        total_storage_bytes:
+          type: integer
+          format: int64
+          description: Sum of total storage (bytes) across all fully available supernodes
+          example: 10995116277760
+        used_storage_bytes:
+          type: integer
+          format: int64
+          description: Sum of used storage (bytes) across all fully available supernodes
+          example: 5497558138880
+        available_storage_bytes:
+          type: integer
+          format: int64
+          description: Calculated available storage (total - used) in bytes
+          example: 5497558138880
+        storage_used_percent:
+          type: number
+          format: double
+          description: Percentage of storage used (used / total * 100)
+          example: 50.0
+        storage_available_percent:
+          type: number
+          format: double
+          description: Percentage of storage available (available / total * 100)
+          example: 50.0
+        available_supernodes:
+          type: integer
+          format: int64
+          description: Number of fully available supernodes included in the statistics
+          example: 42
+        schema_version:
+          type: string
+          description: API schema version
+          example: v1.0
+
     ActionsListResponse:
       type: object
       properties:
@@ -401,12 +543,17 @@ components:
     SupernodeMetricsResponse:
       type: object
       properties:
+        total:
+          type: integer
+          description: Total number of supernodes returned in this response
+          example: 42
         nodes:
           type: array
           items:
-            $ref: '#/components/schemas/SupernodeMetric'
-        rollup:
-          $ref: '#/components/schemas/MetricsRollup'
+            $ref: '#/components/schemas/SingleSupernodeMetrics'
+        next_cursor:
+          type: string
+          description: Pagination cursor for next page (base64 encoded)
         schema_version:
           type: string
           example: v1.0
