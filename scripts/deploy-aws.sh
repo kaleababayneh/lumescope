@@ -34,6 +34,12 @@ IMAGE_TAG="latest"
 APP_PORT=18080
 DRY_RUN=false
 
+# Background worker intervals (defaults match .env)
+VALIDATORS_SYNC_INTERVAL="30m"
+SUPERNODES_SYNC_INTERVAL="20m"
+ACTIONS_SYNC_INTERVAL="5m"
+PROBE_INTERVAL="10m"
+
 # --------------------------------------------------
 # Color output helpers
 # --------------------------------------------------
@@ -59,11 +65,15 @@ Usage: $(basename "$0") [OPTIONS]
 Deploy LumeScope to AWS App Runner with ephemeral PostgreSQL database.
 
 Options:
-  --region REGION         AWS region (default: us-east-1)
-  --service-name NAME     App Runner service name (default: lumescope)
-  --lumera-api URL        Lumera API base URL (default: https://api.lumera.com:1317)
-  --dry-run               Show what would be done without executing
-  --help                  Show this help message
+  --region REGION                   AWS region (default: us-east-1)
+  --service-name NAME               App Runner service name (default: lumescope)
+  --lumera-api URL                  Lumera API base URL (default: https://api.lumera.com:1317)
+  --validators-sync-interval INTERVAL   Validators sync interval (default: 30m)
+  --supernodes-sync-interval INTERVAL   Supernodes sync interval (default: 20m)
+  --actions-sync-interval INTERVAL      Actions sync interval (default: 5m)
+  --probe-interval INTERVAL             Probe interval (default: 10m)
+  --dry-run                         Show what would be done without executing
+  --help                            Show this help message
 
 Environment Variables:
   AWS_REGION              Override default region
@@ -75,6 +85,9 @@ Examples:
 
   # Deploy to a specific region with custom API endpoint
   ./scripts/deploy-aws.sh --region eu-west-1 --lumera-api https://custom-api.example.com:1317
+
+  # Deploy with custom sync intervals
+  ./scripts/deploy-aws.sh --validators-sync-interval 1h --probe-interval 5m
 
   # Dry run to see what would happen
   ./scripts/deploy-aws.sh --dry-run
@@ -98,6 +111,22 @@ parse_args() {
                 ;;
             --lumera-api)
                 LUMERA_API_BASE="$2"
+                shift 2
+                ;;
+            --validators-sync-interval)
+                VALIDATORS_SYNC_INTERVAL="$2"
+                shift 2
+                ;;
+            --supernodes-sync-interval)
+                SUPERNODES_SYNC_INTERVAL="$2"
+                shift 2
+                ;;
+            --actions-sync-interval)
+                ACTIONS_SYNC_INTERVAL="$2"
+                shift 2
+                ;;
+            --probe-interval)
+                PROBE_INTERVAL="$2"
                 shift 2
                 ;;
             --dry-run)
@@ -306,7 +335,11 @@ deploy_app_runner() {
             "Port": "${APP_PORT}",
             "RuntimeEnvironmentVariables": {
                 "LUMERA_API_BASE": "${LUMERA_API_BASE}",
-                "PORT": "${APP_PORT}"
+                "PORT": "${APP_PORT}",
+                "VALIDATORS_SYNC_INTERVAL": "${VALIDATORS_SYNC_INTERVAL}",
+                "SUPERNODES_SYNC_INTERVAL": "${SUPERNODES_SYNC_INTERVAL}",
+                "ACTIONS_SYNC_INTERVAL": "${ACTIONS_SYNC_INTERVAL}",
+                "PROBE_INTERVAL": "${PROBE_INTERVAL}"
             }
         },
         "ImageRepositoryType": "ECR"
@@ -401,6 +434,12 @@ print_summary() {
     echo "ECR Image:        ${ECR_IMAGE_URI}"
     echo "Lumera API:       ${LUMERA_API_BASE}"
     echo "App Port:         ${APP_PORT}"
+    echo ""
+    echo "Background Worker Intervals:"
+    echo "  Validators Sync: ${VALIDATORS_SYNC_INTERVAL}"
+    echo "  Supernodes Sync: ${SUPERNODES_SYNC_INTERVAL}"
+    echo "  Actions Sync:    ${ACTIONS_SYNC_INTERVAL}"
+    echo "  Probe:           ${PROBE_INTERVAL}"
     echo ""
     if [[ "$DRY_RUN" != "true" ]]; then
         echo "Service URL:      https://${SERVICE_URL}"
