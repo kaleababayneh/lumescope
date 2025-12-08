@@ -58,14 +58,17 @@ func NewRouter(cfg config.Config, pool *db.Pool, syncTrigger handlers.SyncTrigge
 		handlers.GetAction(pool)(w, r)
 	})
 
-	mux.HandleFunc("/v1/supernodes/sync", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST, OPTIONS")
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		handlers.TriggerSupernodeSync(syncTrigger)(w, r)
-	})
+	// Conditionally register sync endpoint (disabled by default)
+	if cfg.EnableSyncEndpoint {
+		mux.HandleFunc("/v1/supernodes/sync", func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.Header().Set("Allow", "POST, OPTIONS")
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
+			handlers.TriggerSupernodeSync(syncTrigger)(w, r)
+		})
+	}
 
 	mux.HandleFunc("/v1/supernodes/metrics", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {

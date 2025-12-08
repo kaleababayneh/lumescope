@@ -22,6 +22,7 @@
 #   --help                  Show this help message
 
 set -euo pipefail
+export AWS_PAGER=""
 
 # --------------------------------------------------
 # Default configuration
@@ -33,6 +34,7 @@ IMAGE_NAME="lumescope"
 IMAGE_TAG="latest"
 APP_PORT=18080
 DRY_RUN=false
+SKIP_BUILD=false
 
 # Background worker intervals (defaults match .env)
 VALIDATORS_SYNC_INTERVAL="30m"
@@ -72,6 +74,7 @@ Options:
   --supernodes-sync-interval INTERVAL   Supernodes sync interval (default: 20m)
   --actions-sync-interval INTERVAL      Actions sync interval (default: 5m)
   --probe-interval INTERVAL             Probe interval (default: 10m)
+  --skip-build                      Skip Docker image build (use existing image)
   --dry-run                         Show what would be done without executing
   --help                            Show this help message
 
@@ -128,6 +131,10 @@ parse_args() {
             --probe-interval)
                 PROBE_INTERVAL="$2"
                 shift 2
+                ;;
+            --skip-build)
+                SKIP_BUILD=true
+                shift
                 ;;
             --dry-run)
                 DRY_RUN=true
@@ -386,6 +393,17 @@ EOF
             
             success "App Runner service update initiated"
             
+            # Explicitly trigger a deployment to ensure the new image is deployed
+            # (update-service may not trigger deployment if only image content changed with same tag)
+            info "Triggering deployment to ensure new image is active..."
+            aws apprunner start-deployment \
+                --service-arn "${SERVICE_EXISTS}" \
+                --region "${AWS_REGION}" || {
+                warn "start-deployment failed (deployment may already be in progress from update-service)"
+            }
+            
+            success "Deployment triggered"
+            
             # Get service URL
             SERVICE_URL=$(aws apprunner describe-service \
                 --region "${AWS_REGION}" \
@@ -394,6 +412,7 @@ EOF
                 --output text)
         else
             echo -e "${YELLOW}[DRY-RUN]${NC} aws apprunner update-service --service-arn ${SERVICE_EXISTS}"
+            echo -e "${YELLOW}[DRY-RUN]${NC} aws apprunner start-deployment --service-arn ${SERVICE_EXISTS}"
             SERVICE_URL="<service-url>"
         fi
     else
@@ -474,7 +493,11 @@ main() {
     
     check_prerequisites
     setup_aws_vars
-    build_image
+    if [[ "$SKIP_BUILD" != "true" ]]; then
+        build_image
+    else
+        info "Skipping Docker image build (--skip-build specified)"
+    fi
     push_to_ecr
     setup_iam_role
     deploy_app_runner

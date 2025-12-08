@@ -36,6 +36,9 @@ type Config struct {
 	ActionsSyncInterval    time.Duration
 	ProbeInterval          time.Duration
 	DialTimeout            time.Duration
+
+	// Feature flags
+	EnableSyncEndpoint bool
 }
 
 func Load() Config {
@@ -67,6 +70,8 @@ func Load() Config {
 		ActionsSyncInterval:    durationEnv("ACTIONS_SYNC_INTERVAL", 30*time.Second),
 		ProbeInterval:          durationEnv("PROBE_INTERVAL", 1*time.Minute),
 		DialTimeout:            durationEnv("DIAL_TIMEOUT", 2*time.Second),
+
+		EnableSyncEndpoint: boolEnv("ENABLE_SYNC_ENDPOINT", false),
 	}
 }
 
@@ -90,6 +95,15 @@ func durationEnv(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
+		}
+	}
+	return def
+}
+
+func boolEnv(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return def

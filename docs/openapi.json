@@ -301,37 +301,6 @@
         }
       }
     },
-    "/v1/supernodes/sync": {
-      "post": {
-        "summary": "Trigger supernode sync and probe",
-        "description": "Manually trigger a sync and probe of all supernodes. Returns 202 if started, 204 if already running.",
-        "operationId": "triggerSupernodeSync",
-        "tags": [
-          "Supernodes"
-        ],
-        "responses": {
-          "202": {
-            "description": "Sync and probe started",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "example": "started"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "204": {
-            "description": "Sync and probe already in progress"
-          }
-        }
-      }
-    },
     "/v1/supernodes/unavailable": {
       "get": {
         "summary": "List unavailable supernodes",
