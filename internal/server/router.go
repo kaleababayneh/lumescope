@@ -43,6 +43,15 @@ func NewRouter(cfg config.Config, pool *db.Pool, syncTrigger handlers.SyncTrigge
 		handlers.ListActions(pool)(w, r)
 	})
 
+	// Global action stats: /v1/actions/stats
+	mux.HandleFunc("/v1/actions/stats", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		handlers.GetActionStats(pool)(w, r)
+	})
+
 	// Actions detail: /v1/actions/{id}
 	mux.HandleFunc("/v1/actions/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -84,6 +93,14 @@ func NewRouter(cfg config.Config, pool *db.Pool, syncTrigger handlers.SyncTrigge
 			return
 		}
 		handlers.GetSupernodeStats(pool)(w, r)
+	})
+
+	mux.HandleFunc("/v1/supernodes/action-stats", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			methodNotAllowed(w)
+			return
+		}
+		handlers.GetSupernodeActionStats(pool)(w, r)
 	})
 
 	// Supernode detail metrics: /v1/supernodes/{id}/metrics

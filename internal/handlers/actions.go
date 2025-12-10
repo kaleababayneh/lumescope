@@ -241,3 +241,42 @@ func actionIDFromPath(path string) string {
 	}
 	return s
 }
+
+// ActionStatsResponse represents aggregated action statistics for all actions
+type ActionStatsResponse struct {
+	Total         int            `json:"total"`
+	States        map[string]int `json:"states"`
+	SchemaVersion string         `json:"schema_version"`
+}
+
+// GetActionStats returns aggregated action statistics for all actions (global)
+func GetActionStats(pool *db.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+
+		// Get optional type parameter
+		actionType := strings.TrimSpace(query.Get("type"))
+
+		// Query database
+		stats, err := db.GetActionStats(r.Context(), pool, actionType)
+		if err != nil {
+			util.WriteJSONError(w, http.StatusInternalServerError, "failed to fetch action stats")
+			return
+		}
+
+		// Build states map from state counts
+		statesMap := make(map[string]int)
+		for _, sc := range stats.StateCounts {
+			statesMap[sc.State] = sc.Count
+		}
+
+		response := ActionStatsResponse{
+			Total:         stats.Total,
+			States:        statesMap,
+			SchemaVersion: "v1.0",
+		}
+
+		now := time.Now().UTC()
+		util.WriteJSON(w, r, http.StatusOK, response, &now)
+	}
+}

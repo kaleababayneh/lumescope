@@ -939,6 +939,124 @@ func ListVersionMatrix(ctx context.Context, pool *pgxpool.Pool) ([]VersionRow, e
 // ErrNotFound sentinel
 var ErrNotFound = errors.New("not found")
 
+// StateCount holds the count for a specific action state
+type StateCount struct {
+	State string
+	Count int
+}
+
+// SupernodeActionStats holds aggregated action statistics for a supernode
+type SupernodeActionStats struct {
+	Total       int
+	StateCounts []StateCount
+}
+
+// GetSupernodeActionStats returns aggregated action statistics for a given supernode address.
+// It filters actions where the superNodes JSONB array contains the provided address.
+// If actionType is provided (non-empty), it also filters by that action type.
+func GetSupernodeActionStats(ctx context.Context, pool *pgxpool.Pool, address string, actionType string) (*SupernodeActionStats, error) {
+	var (
+		sb     strings.Builder
+		args   []any
+		argPos = 1
+	)
+
+	sb.WriteString(`SELECT "state", COUNT(*) as count FROM actions WHERE "superNodes" @> $1::jsonb`)
+	// Format address as a JSON array containing the address string for JSONB containment check
+	jsonArray := fmt.Sprintf(`["%s"]`, address)
+	args = append(args, jsonArray)
+	argPos++
+
+	if actionType != "" {
+		sb.WriteString(fmt.Sprintf(` AND "actionType" = $%d`, argPos))
+		args = append(args, actionType)
+		argPos++
+	}
+
+	sb.WriteString(` GROUP BY "state"`)
+
+	rows, err := pool.Query(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var total int
+	var stateCounts []StateCount
+
+	for rows.Next() {
+		var sc StateCount
+		if err := rows.Scan(&sc.State, &sc.Count); err != nil {
+			return nil, err
+		}
+		total += sc.Count
+		stateCounts = append(stateCounts, sc)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return &SupernodeActionStats{
+		Total:       total,
+		StateCounts: stateCounts,
+	}, nil
+}
+
+// ActionStats holds aggregated action statistics for all actions (global)
+type ActionStats struct {
+	Total       int
+	StateCounts []StateCount
+}
+
+// GetActionStats returns aggregated action statistics for all actions (global).
+// It groups actions by state without any supernode filter.
+// If actionType is provided (non-empty), it filters by that action type.
+func GetActionStats(ctx context.Context, pool *pgxpool.Pool, actionType string) (*ActionStats, error) {
+	var (
+		sb     strings.Builder
+		args   []any
+		argPos = 1
+	)
+
+	sb.WriteString(`SELECT "state", COUNT(*) as count FROM actions`)
+
+	if actionType != "" {
+		sb.WriteString(fmt.Sprintf(` WHERE "actionType" = $%d`, argPos))
+		args = append(args, actionType)
+		argPos++
+	}
+
+	sb.WriteString(` GROUP BY "state"`)
+
+	rows, err := pool.Query(ctx, sb.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var total int
+	var stateCounts []StateCount
+
+	for rows.Next() {
+		var sc StateCount
+		if err := rows.Scan(&sc.State, &sc.Count); err != nil {
+			return nil, err
+		}
+		total += sc.Count
+		stateCounts = append(stateCounts, sc)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return &ActionStats{
+		Total:       total,
+		StateCounts: stateCounts,
+	}, nil
+}
+
 // HardwareStats holds aggregated hardware statistics for available supernodes
 type HardwareStats struct {
 	TotalCPUCores       int64 `json:"total_cpu_cores"`

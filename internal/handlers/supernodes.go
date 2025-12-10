@@ -378,6 +378,14 @@ type SupernodeStatsResponse struct {
 	SchemaVersion            string  `json:"schema_version"`
 }
 
+// SupernodeActionStatsResponse represents aggregated action statistics for a supernode
+type SupernodeActionStatsResponse struct {
+	Total            int            `json:"total"`
+	States           map[string]int `json:"states"`
+	SupernodeAddress string         `json:"supernode_address"`
+	SchemaVersion    string         `json:"schema_version"`
+}
+
 // GetSupernodeStats returns aggregated hardware statistics for fully available supernodes
 func GetSupernodeStats(pool *db.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -405,6 +413,46 @@ func GetSupernodeStats(pool *db.Pool) http.HandlerFunc {
 			StorageAvailablePercent: storageAvailablePercent,
 			AvailableSupernodes:     stats.AvailableSupernodes,
 			SchemaVersion:           "v1.0",
+		}
+
+		now := time.Now().UTC()
+		util.WriteJSON(w, r, http.StatusOK, response, &now)
+	}
+}
+
+// GetSupernodeActionStats returns aggregated action statistics for a specific supernode
+func GetSupernodeActionStats(pool *db.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query()
+
+		// Get required address parameter
+		address := strings.TrimSpace(query.Get("address"))
+		if address == "" {
+			util.WriteJSONError(w, http.StatusBadRequest, "address parameter is required")
+			return
+		}
+
+		// Get optional type parameter
+		actionType := strings.TrimSpace(query.Get("type"))
+
+		// Query database
+		stats, err := db.GetSupernodeActionStats(r.Context(), pool, address, actionType)
+		if err != nil {
+			util.WriteJSONError(w, http.StatusInternalServerError, "failed to fetch action stats")
+			return
+		}
+
+		// Build states map from state counts
+		statesMap := make(map[string]int)
+		for _, sc := range stats.StateCounts {
+			statesMap[sc.State] = sc.Count
+		}
+
+		response := SupernodeActionStatsResponse{
+			Total:            stats.Total,
+			States:           statesMap,
+			SupernodeAddress: address,
+			SchemaVersion:    "v1.0",
 		}
 
 		now := time.Now().UTC()

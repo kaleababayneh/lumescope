@@ -78,6 +78,8 @@ paths:
               - ACTION_STATE_UNSPECIFIED
               - ACTION_STATE_PENDING
               - ACTION_STATE_DONE
+              - ACTION_STATE_APPROVED
+              - ACTION_STATE_EXPIRED
         - name: from
           in: query
           description: Filter actions from block height
@@ -134,6 +136,39 @@ paths:
                 $ref: '#/components/schemas/ActionDetail'
         '404':
           description: Action not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/actions/stats:
+    get:
+      summary: Get global action statistics
+      description: |
+        Retrieve aggregated action statistics for all actions (global).
+        Returns total count and a breakdown by state (PENDING, DONE, APPROVED, EXPIRED).
+      operationId: getActionStats
+      tags:
+        - Actions
+      parameters:
+        - name: type
+          in: query
+          description: Filter by action type
+          schema:
+            type: string
+            enum:
+              - ACTION_TYPE_UNSPECIFIED
+              - ACTION_TYPE_CASCADE
+              - ACTION_TYPE_SENSE
+      responses:
+        '200':
+          description: Successful response with action statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionStatsResponse'
+        '500':
+          description: Internal server error
           content:
             application/json:
               schema:
@@ -319,6 +354,53 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /v1/supernodes/action-stats:
+    get:
+      summary: Get action statistics for a supernode
+      description: |
+        Retrieve aggregated action statistics for a specific supernode address.
+        Returns counts grouped by action state for all actions where the supernode
+        is listed in the superNodes array.
+      operationId: getSupernodeActionStats
+      tags:
+        - Supernodes
+      parameters:
+        - name: address
+          in: query
+          required: true
+          description: The supernode address to filter actions by
+          schema:
+            type: string
+            example: lumera1563uuzljqvpanh79w2tvymqsly73v9nwygda73
+        - name: type
+          in: query
+          description: Filter by action type
+          schema:
+            type: string
+            enum:
+              - ACTION_TYPE_UNSPECIFIED
+              - ACTION_TYPE_CASCADE
+              - ACTION_TYPE_SENSE
+      responses:
+        '200':
+          description: Successful response with action statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupernodeActionStatsResponse'
+        '400':
+          description: Invalid or missing address parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /v1/version/matrix:
     get:
       summary: Get version compatibility matrix
@@ -336,6 +418,63 @@ paths:
 
 components:
   schemas:
+    ActionStatsResponse:
+      type: object
+      description: Aggregated action statistics for all actions (global)
+      properties:
+        total:
+          type: integer
+          description: Total number of actions
+          example: 100
+        states:
+          type: object
+          description: Count of actions grouped by state
+          additionalProperties:
+            type: integer
+          example:
+            ACTION_STATE_PENDING: 10
+            ACTION_STATE_DONE: 80
+            ACTION_STATE_APPROVED: 5
+            ACTION_STATE_EXPIRED: 5
+        schema_version:
+          type: string
+          description: API schema version
+          example: v1.0
+      required:
+        - total
+        - states
+        - schema_version
+
+    SupernodeActionStatsResponse:
+      type: object
+      description: Aggregated action statistics for a specific supernode
+      properties:
+        total:
+          type: integer
+          description: Total number of actions associated with the supernode
+          example: 10
+        states:
+          type: object
+          description: Count of actions grouped by state
+          additionalProperties:
+            type: integer
+          example:
+            ACTION_STATE_PENDING: 2
+            ACTION_STATE_DONE: 8
+        supernode_address:
+          type: string
+          description: The supernode address used for filtering
+          example: lumera1563uuzljqvpanh79w2tvymqsly73v9nwygda73
+        schema_version:
+          type: string
+          description: API schema version
+          example: v1.0
+      required:
+        - total
+        - states
+        - supernode_address
+        - schema_version
+
     SupernodeStatsResponse:
       type: object
       description: Aggregated hardware statistics for fully available supernodes
