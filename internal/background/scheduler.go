@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"mime"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -206,6 +208,11 @@ func (r *Runner) syncActions(ctx context.Context) error {
 			if superNodes == nil {
 				superNodes = []string{}
 			}
+
+			// Extract mimeType from file_name extension in metadataJSON (for Cascade actions)
+			// Size is not available in metadata, default to 0
+			mimeType := extractMimeType(decoded)
+
 			rec := db.ActionDB{
 				ActionID:       a.ActionID,
 				Creator:        a.Creator,
@@ -218,6 +225,8 @@ func (r *Runner) syncActions(ctx context.Context) error {
 				MetadataRaw:    raw,
 				MetadataJSON:   toJSONB(decoded),
 				SuperNodes:     toJSONB(superNodes),
+				MimeType:       mimeType,
+				Size:           0, // Size not available in metadata
 			}
 			if err := db.UpsertAction(ctx, r.DB, rec); err != nil {
 				log.Printf("upsert action %s: %v", a.ActionID, err)
@@ -415,6 +424,34 @@ func toJSONB(v any) any {
 		return nil
 	}
 	return string(b)
+}
+
+// extractMimeType derives MIME type from file_name extension in decoded metadata.
+// Works primarily for Cascade actions which have a file_name field.
+// Returns "application/octet-stream" if file_name is not found, has no extension, or extension is unknown.
+// Strips any charset suffix (e.g., "text/plain; charset=utf-8" -> "text/plain").
+func extractMimeType(decoded map[string]any) string {
+	if decoded == nil {
+		return "application/octet-stream"
+	}
+	// Check for file_name field (used in CascadeMetadata)
+	fileName, ok := decoded["file_name"].(string)
+	if !ok || fileName == "" {
+		return "application/octet-stream"
+	}
+	ext := filepath.Ext(fileName)
+	if ext == "" {
+		return "application/octet-stream"
+	}
+	mimeType := mime.TypeByExtension(ext)
+	if mimeType == "" {
+		return "application/octet-stream"
+	}
+	// Strip charset suffix if present (e.g., "text/plain; charset=utf-8" -> "text/plain")
+	if idx := strings.Index(mimeType, ";"); idx != -1 {
+		mimeType = strings.TrimSpace(mimeType[:idx])
+	}
+	return mimeType
 }
 
 func tcpOpen(ctx context.Context, host string, port int, timeout time.Duration) bool {

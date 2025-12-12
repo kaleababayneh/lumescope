@@ -93,22 +93,27 @@ func Bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
 		`ALTER TABLE supernodes ADD COLUMN IF NOT EXISTS "failedProbeCounter" INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE supernodes ADD COLUMN IF NOT EXISTS "lastKnownActualVersion" VARCHAR(255)`,
 		`CREATE TABLE IF NOT EXISTS actions (
-			"actionID"      VARCHAR(64) PRIMARY KEY,
-			"creator"       VARCHAR(255),
-			"actionType"    TEXT,
-			"state"         TEXT,
-			"blockHeight"   BIGINT,
-			"priceDenom"    TEXT,
-			"priceAmount"   TEXT,
-			"expirationTime" BIGINT,
-			"metadataRaw"   BYTEA,
-			"metadataJSON"  JSONB,
-			"superNodes"    JSONB,
-			"createdAt"     TIMESTAMP NOT NULL DEFAULT now(),
-			"updatedAt"     TIMESTAMP NOT NULL DEFAULT now()
-		)`,
-		// Migration for existing actions table: add superNodes column if it doesn't exist
-		`ALTER TABLE actions ADD COLUMN IF NOT EXISTS "superNodes" JSONB`,
+				"actionID"      VARCHAR(64) PRIMARY KEY,
+				"creator"       VARCHAR(255),
+				"actionType"    TEXT,
+				"state"         TEXT,
+				"blockHeight"   BIGINT,
+				"priceDenom"    TEXT,
+				"priceAmount"   TEXT,
+				"expirationTime" BIGINT,
+				"metadataRaw"   BYTEA,
+				"metadataJSON"  JSONB,
+				"superNodes"    JSONB,
+				"mimeType"      TEXT,
+				"size"          BIGINT NOT NULL DEFAULT 0,
+				"createdAt"     TIMESTAMP NOT NULL DEFAULT now(),
+				"updatedAt"     TIMESTAMP NOT NULL DEFAULT now()
+			)`,
+			// Migration for existing actions table: add superNodes column if it doesn't exist
+			`ALTER TABLE actions ADD COLUMN IF NOT EXISTS "superNodes" JSONB`,
+			// Migration for existing actions table: add mimeType and size columns if they don't exist
+			`ALTER TABLE actions ADD COLUMN IF NOT EXISTS "mimeType" TEXT`,
+			`ALTER TABLE actions ADD COLUMN IF NOT EXISTS "size" BIGINT NOT NULL DEFAULT 0`,
 	}
 	for _, s := range stmts {
 		if _, err := pool.Exec(ctx, s); err != nil {
@@ -298,8 +303,8 @@ func UpdateSupernodeProbeData(ctx context.Context, pool *pgxpool.Pool, sn Supern
 
 // UpsertAction inserts/updates an action record.
 func UpsertAction(ctx context.Context, pool *pgxpool.Pool, a ActionDB) error {
-	sql := `INSERT INTO actions ("actionID","creator","actionType","state","blockHeight","priceDenom","priceAmount","expirationTime","metadataRaw","metadataJSON","superNodes","createdAt","updatedAt")
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,now(),now())
+	sql := `INSERT INTO actions ("actionID","creator","actionType","state","blockHeight","priceDenom","priceAmount","expirationTime","metadataRaw","metadataJSON","superNodes","mimeType","size","createdAt","updatedAt")
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,now(),now())
 	ON CONFLICT ("actionID") DO UPDATE SET
 		"creator"=EXCLUDED."creator",
 		"actionType"=EXCLUDED."actionType",
@@ -311,9 +316,11 @@ func UpsertAction(ctx context.Context, pool *pgxpool.Pool, a ActionDB) error {
 		"metadataRaw"=EXCLUDED."metadataRaw",
 		"metadataJSON"=EXCLUDED."metadataJSON",
 		"superNodes"=EXCLUDED."superNodes",
+		"mimeType"=EXCLUDED."mimeType",
+		"size"=EXCLUDED."size",
 		"updatedAt"=now()`
 	_, err := pool.Exec(ctx, sql,
-		a.ActionID, a.Creator, a.ActionType, a.State, a.BlockHeight, a.PriceDenom, a.PriceAmount, a.ExpirationTime, a.MetadataRaw, a.MetadataJSON, a.SuperNodes,
+		a.ActionID, a.Creator, a.ActionType, a.State, a.BlockHeight, a.PriceDenom, a.PriceAmount, a.ExpirationTime, a.MetadataRaw, a.MetadataJSON, a.SuperNodes, a.MimeType, a.Size,
 	)
 	return err
 }
@@ -607,6 +614,8 @@ type ActionDB struct {
 	MetadataRaw    []byte
 	MetadataJSON   any
 	SuperNodes     any
+	MimeType       string
+	Size           int64
 	CreatedAt      time.Time
 }
 
@@ -698,10 +707,10 @@ func ListActionsFiltered(ctx context.Context, pool *pgxpool.Pool, f ActionsFilte
 		argPos     = 1
 	)
 
-	sb.WriteString(`SELECT 
+	sb.WriteString(`SELECT
 						"actionID","creator","actionType","state","blockHeight",
 						"priceDenom","priceAmount","expirationTime","metadataRaw","metadataJSON",
-						"superNodes","createdAt" 
+						"superNodes","mimeType","size","createdAt"
 					FROM actions`)
 
 	if f.Type != nil {
@@ -765,6 +774,8 @@ func ListActionsFiltered(ctx context.Context, pool *pgxpool.Pool, f ActionsFilte
 			&a.MetadataRaw,
 			&a.MetadataJSON,
 			&a.SuperNodes,
+			&a.MimeType,
+			&a.Size,
 			&a.CreatedAt,
 		); err != nil {
 			return nil, false, err
@@ -786,7 +797,7 @@ func ListActionsFiltered(ctx context.Context, pool *pgxpool.Pool, f ActionsFilte
 
 // GetActionByID fetches a single action by ID from the database
 func GetActionByID(ctx context.Context, pool *pgxpool.Pool, actionID string) (ActionDB, error) {
-	query := `SELECT "actionID","creator","actionType","state","blockHeight","priceDenom","priceAmount","expirationTime","metadataRaw","metadataJSON","superNodes","createdAt"
+	query := `SELECT "actionID","creator","actionType","state","blockHeight","priceDenom","priceAmount","expirationTime","metadataRaw","metadataJSON","superNodes","mimeType","size","createdAt"
 		FROM actions
 		WHERE "actionID" = $1`
 
@@ -803,6 +814,8 @@ func GetActionByID(ctx context.Context, pool *pgxpool.Pool, actionID string) (Ac
 		&a.MetadataRaw,
 		&a.MetadataJSON,
 		&a.SuperNodes,
+		&a.MimeType,
+		&a.Size,
 		&a.CreatedAt,
 	)
 	if err != nil {
@@ -1009,6 +1022,27 @@ type ActionStats struct {
 	StateCounts []StateCount
 }
 
+// MimeTypeStat holds statistics for a specific MIME type
+type MimeTypeStat struct {
+	MimeType string
+	Count    int
+	AvgSize  float64
+}
+
+// ActionStatsFilter holds optional filters for action statistics
+type ActionStatsFilter struct {
+	ActionType *string
+	From       *time.Time
+	To         *time.Time
+}
+
+// ActionStatsExtended holds aggregated action statistics with MIME type breakdown
+type ActionStatsExtended struct {
+	Total         int
+	StateCounts   []StateCount
+	MimeTypeStats []MimeTypeStat
+}
+
 // GetActionStats returns aggregated action statistics for all actions (global).
 // It groups actions by state without any supernode filter.
 // If actionType is provided (non-empty), it filters by that action type.
@@ -1054,6 +1088,94 @@ func GetActionStats(ctx context.Context, pool *pgxpool.Pool, actionType string) 
 	return &ActionStats{
 		Total:       total,
 		StateCounts: stateCounts,
+	}, nil
+}
+
+// GetActionStatsExtended returns aggregated action statistics with MIME type breakdown.
+// It supports optional time filtering via from/to timestamps on createdAt column.
+// If actionType is provided (non-empty), it filters by that action type.
+func GetActionStatsExtended(ctx context.Context, pool *pgxpool.Pool, filter ActionStatsFilter) (*ActionStatsExtended, error) {
+	// Build WHERE conditions
+	var conditions []string
+	var args []any
+	argPos := 1
+
+	if filter.ActionType != nil && *filter.ActionType != "" {
+		conditions = append(conditions, fmt.Sprintf(`"actionType" = $%d`, argPos))
+		args = append(args, *filter.ActionType)
+		argPos++
+	}
+
+	if filter.From != nil {
+		conditions = append(conditions, fmt.Sprintf(`"createdAt" >= $%d`, argPos))
+		args = append(args, *filter.From)
+		argPos++
+	}
+
+	if filter.To != nil {
+		conditions = append(conditions, fmt.Sprintf(`"createdAt" <= $%d`, argPos))
+		args = append(args, *filter.To)
+		argPos++
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	// Query 1: Get state counts
+	stateQuery := `SELECT "state", COUNT(*) as count FROM actions` + whereClause + ` GROUP BY "state"`
+	stateRows, err := pool.Query(ctx, stateQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query state counts: %w", err)
+	}
+	defer stateRows.Close()
+
+	var total int
+	var stateCounts []StateCount
+
+	for stateRows.Next() {
+		var sc StateCount
+		if err := stateRows.Scan(&sc.State, &sc.Count); err != nil {
+			return nil, fmt.Errorf("scan state count: %w", err)
+		}
+		total += sc.Count
+		stateCounts = append(stateCounts, sc)
+	}
+
+	if err := stateRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate state rows: %w", err)
+	}
+
+	// Query 2: Get MIME type statistics
+	mimeQuery := `SELECT COALESCE("mimeType", '') as mime_type, COUNT(*) as count, COALESCE(AVG("size"), 0) as avg_size FROM actions` + whereClause + ` GROUP BY "mimeType"`
+	mimeRows, err := pool.Query(ctx, mimeQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query mime stats: %w", err)
+	}
+	defer mimeRows.Close()
+
+	var mimeStats []MimeTypeStat
+
+	for mimeRows.Next() {
+		var ms MimeTypeStat
+		if err := mimeRows.Scan(&ms.MimeType, &ms.Count, &ms.AvgSize); err != nil {
+			return nil, fmt.Errorf("scan mime stat: %w", err)
+		}
+		// Only include non-empty MIME types in the result
+		if ms.MimeType != "" {
+			mimeStats = append(mimeStats, ms)
+		}
+	}
+
+	if err := mimeRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate mime rows: %w", err)
+	}
+
+	return &ActionStatsExtended{
+		Total:         total,
+		StateCounts:   stateCounts,
+		MimeTypeStats: mimeStats,
 	}, nil
 }
 

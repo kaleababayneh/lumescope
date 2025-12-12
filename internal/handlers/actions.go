@@ -18,6 +18,9 @@ type ActionItem struct {
 	Creator     string      `json:"creator"`
 	State       string      `json:"state"`
 	BlockHeight int64       `json:"block_height"`
+	MimeType    string      `json:"mime_type,omitempty"`
+	Size        int64       `json:"size"`
+	Price       Price       `json:"price"`
 	Decoded     interface{} `json:"decoded,omitempty"`
 	Raw         string      `json:"raw,omitempty"` // base64 of raw bytes if unknown type
 }
@@ -123,6 +126,12 @@ func ListActions(pool *db.Pool) http.HandlerFunc {
 				Creator:     a.Creator,
 				State:       a.State,
 				BlockHeight: a.BlockHeight,
+				MimeType:    a.MimeType,
+				Size:        a.Size,
+				Price: Price{
+					Amount: a.PriceAmount,
+					Denom:  a.PriceDenom,
+				},
 			}
 
 			// Add decoded metadata if available
@@ -187,6 +196,8 @@ func GetAction(pool *db.Pool) http.HandlerFunc {
 			Creator       string      `json:"creator"`
 			State         string      `json:"state"`
 			BlockHeight   int64       `json:"block_height"`
+			MimeType      string      `json:"mime_type,omitempty"`
+			Size          int64       `json:"size"`
 			Price         Price       `json:"price"`
 			Timestamp     time.Time   `json:"timestamp"`
 			Decoded       interface{} `json:"decoded,omitempty"`
@@ -199,6 +210,8 @@ func GetAction(pool *db.Pool) http.HandlerFunc {
 			Creator:     action.Creator,
 			State:       action.State,
 			BlockHeight: action.BlockHeight,
+			MimeType:    action.MimeType,
+			Size:        action.Size,
 			Price: Price{
 				Denom:  action.PriceDenom,
 				Amount: action.PriceAmount,
@@ -242,11 +255,19 @@ func actionIDFromPath(path string) string {
 	return s
 }
 
+// MimeTypeStatResponse represents statistics for a single MIME type
+type MimeTypeStatResponse struct {
+	Type    string  `json:"type"`
+	Count   int     `json:"count"`
+	AvgSize float64 `json:"avg_size"`
+}
+
 // ActionStatsResponse represents aggregated action statistics for all actions
 type ActionStatsResponse struct {
-	Total         int            `json:"total"`
-	States        map[string]int `json:"states"`
-	SchemaVersion string         `json:"schema_version"`
+	Total         int                    `json:"total"`
+	States        map[string]int         `json:"states"`
+	MimeTypes     []MimeTypeStatResponse `json:"mime_types,omitempty"`
+	SchemaVersion string                 `json:"schema_version"`
 }
 
 // GetActionStats returns aggregated action statistics for all actions (global)
@@ -254,11 +275,36 @@ func GetActionStats(pool *db.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
 
-		// Get optional type parameter
-		actionType := strings.TrimSpace(query.Get("type"))
+		// Build filter from query parameters
+		filter := db.ActionStatsFilter{}
 
-		// Query database
-		stats, err := db.GetActionStats(r.Context(), pool, actionType)
+		// Get optional type parameter
+		if actionType := strings.TrimSpace(query.Get("type")); actionType != "" {
+			filter.ActionType = &actionType
+		}
+
+		// Parse optional 'from' parameter (RFC3339 format)
+		if fromStr := strings.TrimSpace(query.Get("from")); fromStr != "" {
+			parsedFrom, err := time.Parse(time.RFC3339, fromStr)
+			if err != nil {
+				util.WriteJSONError(w, http.StatusBadRequest, "invalid 'from' parameter: must be RFC3339 format")
+				return
+			}
+			filter.From = &parsedFrom
+		}
+
+		// Parse optional 'to' parameter (RFC3339 format)
+		if toStr := strings.TrimSpace(query.Get("to")); toStr != "" {
+			parsedTo, err := time.Parse(time.RFC3339, toStr)
+			if err != nil {
+				util.WriteJSONError(w, http.StatusBadRequest, "invalid 'to' parameter: must be RFC3339 format")
+				return
+			}
+			filter.To = &parsedTo
+		}
+
+		// Query database with extended stats
+		stats, err := db.GetActionStatsExtended(r.Context(), pool, filter)
 		if err != nil {
 			util.WriteJSONError(w, http.StatusInternalServerError, "failed to fetch action stats")
 			return
@@ -270,9 +316,20 @@ func GetActionStats(pool *db.Pool) http.HandlerFunc {
 			statesMap[sc.State] = sc.Count
 		}
 
+		// Build MIME types list
+		var mimeTypes []MimeTypeStatResponse
+		for _, ms := range stats.MimeTypeStats {
+			mimeTypes = append(mimeTypes, MimeTypeStatResponse{
+				Type:    ms.MimeType,
+				Count:   ms.Count,
+				AvgSize: ms.AvgSize,
+			})
+		}
+
 		response := ActionStatsResponse{
 			Total:         stats.Total,
 			States:        statesMap,
+			MimeTypes:     mimeTypes,
 			SchemaVersion: "v1.0",
 		}
 

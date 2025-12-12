@@ -101,7 +101,7 @@
     "problem": "Client apps waste resources parsing protobufs and scraping many SN endpoints; results are inconsistent and slow.",
     "target_audience": "Builders of Lumera UIs/APIs, infra operators, analytics platforms.",
     "mvp_features": [
-      "Chain follower with Action ingestion (gRPC+WS).",
+      "Chain data fetcher with Action ingestion (REST/LCD polling).",
       "Protobuf codec registry (generated) with safe fallbacks.",
       "Cascade LEP1 resolver and joined Action detail endpoint.",
       "SuperNode metrics scraper + rollup endpoint.",
@@ -161,7 +161,7 @@
     ],
     "tech_stack_components": [
       "Go or TypeScript (NestJS) services",
-      "gRPC/WebSocket chain follower",
+      "HTTP REST/LCD chain polling",
       "Protobuf codegen (Go/TS) for codecs",
       "PostgreSQL + Redis; optional TimescaleDB/ClickHouse for metrics",
       "Prometheus/Grafana; OpenTelemetry traces",
@@ -177,7 +177,7 @@
   "implementation_checkpoints": {
     "code_modules_priority": [
       "proto-codecs package (generated; test fixtures)",
-      "action-ingester (gRPC/WS follower with reorg handling)",
+      "action-ingester (REST/LCD polling with pagination)",
       "decoder/joiner (LEP1 resolver + typed JSON views)",
       "supernode-scraper (metrics, capabilities, version map)",
       "rest-api (v1 endpoints, pagination, ETag, rate limit)",

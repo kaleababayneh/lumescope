@@ -206,7 +206,7 @@
     "/v1/actions/stats": {
       "get": {
         "summary": "Get global action statistics",
-        "description": "Retrieve aggregated action statistics for all actions (global). Returns total count and a breakdown by state (PENDING, DONE, APPROVED, EXPIRED).",
+        "description": "Retrieve aggregated action statistics for all actions (global). Returns total count, a breakdown by state (PENDING, DONE, APPROVED, EXPIRED), and MIME type statistics with count and average file size. Supports optional time filtering via `from` and `to` parameters.",
         "operationId": "getActionStats",
         "tags": [
           "Actions"
@@ -224,6 +224,26 @@
                 "ACTION_TYPE_SENSE"
               ]
             }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Filter actions created at or after this timestamp (RFC3339 format)",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "example": "2024-01-01T00:00:00Z"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Filter actions created at or before this timestamp (RFC3339 format)",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "example": "2024-12-31T23:59:59Z"
           }
         ],
         "responses": {
@@ -233,6 +253,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ActionStatsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query parameter (e.g., invalid date format)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
                 }
               }
             }
@@ -620,6 +650,13 @@
               "ACTION_STATE_EXPIRED": 5
             }
           },
+          "mime_types": {
+            "type": "array",
+            "description": "Statistics for each MIME type (count and average file size)",
+            "items": {
+              "$ref": "#/components/schemas/MimeTypeStat"
+            }
+          },
           "schema_version": {
             "type": "string",
             "description": "API schema version",
@@ -630,6 +667,33 @@
           "total",
           "states",
           "schema_version"
+        ]
+      },
+      "MimeTypeStat": {
+        "type": "object",
+        "description": "Statistics for a specific MIME type",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "The MIME type",
+            "example": "image/jpeg"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of actions with this MIME type",
+            "example": 50
+          },
+          "avg_size": {
+            "type": "number",
+            "format": "double",
+            "description": "Average file size in bytes for actions with this MIME type",
+            "example": 1024.5
+          }
+        },
+        "required": [
+          "type",
+          "count",
+          "avg_size"
         ]
       },
       "SupernodeActionStatsResponse": {
@@ -777,6 +841,20 @@
             "description": "Block height when action was created",
             "example": 12345
           },
+          "mime_type": {
+            "type": "string",
+            "description": "MIME type of the action's file (e.g., image/jpeg, text/plain, application/pdf). Returns application/octet-stream for unknown types.",
+            "example": "image/jpeg"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "File size in bytes",
+            "example": 1048576
+          },
+          "price": {
+            "$ref": "#/components/schemas/Price"
+          },
           "decoded": {
             "type": "object",
             "additionalProperties": true,
@@ -822,6 +900,17 @@
             "format": "int64",
             "description": "Block height when action was created",
             "example": 12345
+          },
+          "mime_type": {
+            "type": "string",
+            "description": "MIME type of the action's file (e.g., image/jpeg, text/plain, application/pdf). Returns application/octet-stream for unknown types.",
+            "example": "image/jpeg"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "File size in bytes",
+            "example": 1048576
           },
           "price": {
             "$ref": "#/components/schemas/Price"
