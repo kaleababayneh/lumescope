@@ -31,7 +31,7 @@ AWS_REGION="${AWS_REGION:-us-east-1}"
 SERVICE_NAME="lumescope"
 LUMERA_API_BASE="https://api.lumera.com:1317"
 IMAGE_NAME="lumescope"
-IMAGE_TAG="latest"
+IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD)-$(date +%s)}"
 APP_PORT=18080
 DRY_RUN=false
 SKIP_BUILD=false
@@ -193,7 +193,8 @@ check_prerequisites() {
     fi
     
     # Verify AWS credentials
-    if ! aws sts get-caller-identity &>/dev/null; then
+    if ! STS_OUTPUT=$(aws sts get-caller-identity 2>&1); then
+        error "AWS command failed: ${STS_OUTPUT}"
         die "AWS credentials not configured or invalid. Run 'aws configure' or set AWS_PROFILE."
     fi
     
@@ -269,6 +270,19 @@ push_to_ecr() {
     
     info "Pushing image to ECR..."
     run_cmd docker push "${ECR_IMAGE_URI}"
+    
+    # Verify image is available in ECR before proceeding
+    info "Verifying image in ECR..."
+    if [[ "$DRY_RUN" != "true" ]]; then
+        aws ecr describe-images --repository-name "${IMAGE_NAME}" --image-ids imageTag="${IMAGE_TAG}" --region "${AWS_REGION}" >/dev/null
+    else
+        echo -e "${YELLOW}[DRY-RUN]${NC} aws ecr describe-images --repository-name ${IMAGE_NAME} --image-ids imageTag=${IMAGE_TAG}"
+    fi
+    
+    # Also push latest tag for convenience (manual testing/reference)
+    info "Tagging and pushing as 'latest' for convenience..."
+    run_cmd docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${ECR_REPO}/${IMAGE_NAME}:latest"
+    run_cmd docker push "${ECR_REPO}/${IMAGE_NAME}:latest"
     
     success "Image pushed to ECR: ${ECR_IMAGE_URI}"
 }
@@ -407,16 +421,8 @@ EOF
             
             success "App Runner service update initiated"
             
-            # Explicitly trigger a deployment to ensure the new image is deployed
-            # (update-service may not trigger deployment if only image content changed with same tag)
-            info "Triggering deployment to ensure new image is active..."
-            aws apprunner start-deployment \
-                --service-arn "${SERVICE_EXISTS}" \
-                --region "${AWS_REGION}" || {
-                warn "start-deployment failed (deployment may already be in progress from update-service)"
-            }
-            
-            success "Deployment triggered"
+            # Note: With unique image tags, update-service always detects a configuration
+            # change and triggers deployment automatically. No need for start-deployment.
             
             # Get service URL
             SERVICE_URL=$(aws apprunner describe-service \
@@ -426,7 +432,6 @@ EOF
                 --output text)
         else
             echo -e "${YELLOW}[DRY-RUN]${NC} aws apprunner update-service --service-arn ${SERVICE_EXISTS}"
-            echo -e "${YELLOW}[DRY-RUN]${NC} aws apprunner start-deployment --service-arn ${SERVICE_EXISTS}"
             SERVICE_URL="<service-url>"
         fi
     else
