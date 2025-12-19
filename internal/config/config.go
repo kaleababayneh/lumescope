@@ -31,11 +31,13 @@ type Config struct {
 	HTTPTimeout   time.Duration
 
 	// Background intervals
-	ValidatorsSyncInterval time.Duration
-	SupernodesSyncInterval time.Duration
-	ActionsSyncInterval    time.Duration
-	ProbeInterval          time.Duration
-	DialTimeout            time.Duration
+	ValidatorsSyncInterval    time.Duration
+	SupernodesSyncInterval    time.Duration
+	ActionsSyncInterval       time.Duration
+	ProbeInterval             time.Duration
+	DialTimeout               time.Duration
+	ActionTxEnricherInterval  time.Duration
+	ActionEnricherStartID     uint64
 
 	// Feature flags
 	EnableSyncEndpoint bool
@@ -63,13 +65,15 @@ func Load() Config {
 		DB_MaxConns: int32Env("DB_MAX_CONNS", 10),
 
 		LumeraAPIBase: getenv("LUMERA_API_BASE", "http://localhost:1317"),
-		HTTPTimeout:   durationEnv("HTTP_TIMEOUT", 10*time.Second),
+		HTTPTimeout:   durationEnv("HTTP_TIMEOUT", 30*time.Second),
 
-		ValidatorsSyncInterval: durationEnv("VALIDATORS_SYNC_INTERVAL", 5*time.Minute),
-		SupernodesSyncInterval: durationEnv("SUPERNODES_SYNC_INTERVAL", 2*time.Minute),
-		ActionsSyncInterval:    durationEnv("ACTIONS_SYNC_INTERVAL", 30*time.Second),
-		ProbeInterval:          durationEnv("PROBE_INTERVAL", 1*time.Minute),
-		DialTimeout:            durationEnv("DIAL_TIMEOUT", 2*time.Second),
+		ValidatorsSyncInterval:   durationEnv("VALIDATORS_SYNC_INTERVAL", 5*time.Minute),
+		SupernodesSyncInterval:   durationEnv("SUPERNODES_SYNC_INTERVAL", 2*time.Minute),
+		ActionsSyncInterval:      durationEnv("ACTIONS_SYNC_INTERVAL", 30*time.Second),
+		ProbeInterval:            durationEnv("PROBE_INTERVAL", 1*time.Minute),
+		DialTimeout:              durationEnv("DIAL_TIMEOUT", 2*time.Second),
+		ActionTxEnricherInterval: durationEnv("ACTION_TX_ENRICHER_INTERVAL", 10*time.Second),
+		ActionEnricherStartID:    uint64Env("ACTION_ENRICHER_START_ID", 0),
 
 		EnableSyncEndpoint: boolEnv("ENABLE_SYNC_ENDPOINT", false),
 	}
@@ -104,6 +108,15 @@ func boolEnv(key string, def bool) bool {
 	if v := os.Getenv(key); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			return b
+		}
+	}
+	return def
+}
+
+func uint64Env(key string, def uint64) uint64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseUint(v, 10, 64); err == nil {
+			return n
 		}
 	}
 	return def

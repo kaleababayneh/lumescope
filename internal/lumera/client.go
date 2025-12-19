@@ -6,18 +6,24 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+
+	"lumescope/internal/db"
 )
 
 // Client is a minimal Lumera/Cosmos SDK REST client using stdlib only.
 type Client struct {
-	BaseURL   string
-	HTTP      *http.Client
-	UserAgent string
+	BaseURL           string
+	HTTP              *http.Client
+	UserAgent         string
+	actionModuleAddr  string // cached action module address
+	moduleAddrFetched bool   // whether we've fetched the module address
 }
 
 func NewClient(baseURL string, timeout time.Duration) *Client {
@@ -26,6 +32,51 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 		HTTP:      &http.Client{Timeout: timeout},
 		UserAgent: "lumescope/preview",
 	}
+}
+
+// ModuleAccountResponse represents the response from /cosmos/auth/v1beta1/module_accounts/{name}
+type ModuleAccountResponse struct {
+	Account struct {
+		Type        string `json:"@type"`
+		BaseAccount struct {
+			Address string `json:"address"`
+		} `json:"base_account"`
+		Name        string   `json:"name"`
+		Permissions []string `json:"permissions"`
+	} `json:"account"`
+}
+
+// GetActionModuleAccount returns the cached action module address, fetching it if necessary.
+// The address is cached after the first successful fetch.
+func (c *Client) GetActionModuleAccount(ctx context.Context) (string, error) {
+	// Return cached value if available
+	if c.moduleAddrFetched && c.actionModuleAddr != "" {
+		return c.actionModuleAddr, nil
+	}
+
+	// Fetch from API
+	var resp ModuleAccountResponse
+	err := c.doJSON(ctx, http.MethodGet, "/cosmos/auth/v1beta1/module_accounts/action", nil, &resp)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch action module account: %w", err)
+	}
+
+	if resp.Account.BaseAccount.Address == "" {
+		return "", fmt.Errorf("action module account address is empty")
+	}
+
+	// Cache the result
+	c.actionModuleAddr = resp.Account.BaseAccount.Address
+	c.moduleAddrFetched = true
+
+	log.Printf("Fetched and cached action module address: %s", c.actionModuleAddr)
+	return c.actionModuleAddr, nil
+}
+
+// SetActionModuleAccount sets the action module address (useful for testing).
+func (c *Client) SetActionModuleAccount(addr string) {
+	c.actionModuleAddr = addr
+	c.moduleAddrFetched = true
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, q url.Values, v any) error {
@@ -267,3 +318,374 @@ type Pagination struct {
 func IsValidIP(s string) bool { return net.ParseIP(s) != nil }
 
 var ErrInvalidBaseURL = errors.New("invalid base URL")
+
+// Transaction search types for Cosmos SDK tx_search endpoint
+
+// TxSearchResponse represents the response from /cosmos/tx/v1beta1/txs
+type TxSearchResponse struct {
+	Txs         []TxResponse `json:"txs"`
+	TxResponses []TxResult   `json:"tx_responses"`
+	Pagination  *Pagination  `json:"pagination"`
+}
+
+// TxResponse contains the raw transaction
+type TxResponse struct {
+	Body     TxBody   `json:"body"`
+	AuthInfo AuthInfo `json:"auth_info"`
+}
+
+// TxBody contains transaction messages
+type TxBody struct {
+	Messages []json.RawMessage `json:"messages"`
+}
+
+// AuthInfo contains fee information
+type AuthInfo struct {
+	Fee         Fee          `json:"fee"`
+	SignerInfos []SignerInfo `json:"signer_infos"`
+}
+
+// SignerInfo contains signer information
+type SignerInfo struct {
+	PublicKey json.RawMessage `json:"public_key"`
+	Sequence  string          `json:"sequence"`
+}
+
+// Fee contains fee amount
+type Fee struct {
+	Amount []Coin `json:"amount"`
+}
+
+// Coin represents a denomination and amount
+type Coin struct {
+	Denom  string `json:"denom"`
+	Amount string `json:"amount"`
+}
+
+// TxResult contains the transaction execution result
+type TxResult struct {
+	TxHash    string    `json:"txhash"`
+	Height    string    `json:"height"`
+	Timestamp string    `json:"timestamp"`
+	GasWanted string    `json:"gas_wanted"`
+	GasUsed   string    `json:"gas_used"`
+	Events    []Event   `json:"events"`
+	RawLog    string    `json:"raw_log"`
+	Logs      []ABCILog `json:"logs"`
+}
+
+// Event represents a transaction event
+type Event struct {
+	Type       string      `json:"type"`
+	Attributes []Attribute `json:"attributes"`
+}
+
+// Attribute is a key-value pair in an event
+type Attribute struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// ABCILog represents a log entry from transaction execution
+type ABCILog struct {
+	MsgIndex int     `json:"msg_index"`
+	Events   []Event `json:"events"`
+}
+
+// GetActionTransactions fetches transaction details for an action's lifecycle events.
+// It queries for register, finalize, and approve transactions based on action events.
+// Returns ActionTransaction records ready to be persisted.
+func (c *Client) GetActionTransactions(ctx context.Context, action *db.Action) ([]*db.ActionTransaction, error) {
+	var results []*db.ActionTransaction
+
+	// Fetch module account address for proper transfer flow parsing
+	moduleAddr, err := c.GetActionModuleAccount(ctx)
+	if err != nil {
+		// Log but continue - we can still parse with fallbacks
+		log.Printf("GetActionTransactions: failed to get module account address: %v", err)
+	}
+
+	// Query patterns for different transaction types
+	queries := []struct {
+		eventType string
+		txType    string
+	}{
+		{"action_registered.action_id", "register"},
+		{"action_finalized.action_id", "finalize"},
+		{"action_approved.action_id", "approve"},
+	}
+
+	for _, q := range queries {
+		// Convert uint64 ActionID to string for API query
+		txs, err := c.searchTxsByEvent(ctx, q.eventType, strconv.FormatUint(action.ActionID, 10))
+		if err != nil {
+			// Log but continue with other queries
+			continue
+		}
+
+		for i, txResult := range txs.TxResponses {
+			var tx *TxResponse
+			if i < len(txs.Txs) {
+				tx = &txs.Txs[i]
+			}
+
+			actionTx := c.parseTxResult(action, q.txType, txResult, tx, moduleAddr)
+			if actionTx != nil {
+				results = append(results, actionTx)
+			}
+		}
+	}
+
+	return results, nil
+}
+
+// searchTxsByEvent queries the Cosmos SDK tx_search endpoint for transactions
+// matching a specific event type and value.
+// It implements a fallback strategy: first tries without quotes, then with quotes if 0 results.
+func (c *Client) searchTxsByEvent(ctx context.Context, eventType, value string) (*TxSearchResponse, error) {
+	// First attempt: without quotes around value
+	// Format: query=action_registered.action_id=ACTION_ID
+	q := url.Values{}
+	q.Set("query", fmt.Sprintf("%s=%s", eventType, value))
+	q.Set("pagination.limit", "10")
+
+	fullURL := c.BaseURL + "/cosmos/tx/v1beta1/txs?" + q.Encode()
+	log.Printf("searchTxsByEvent: querying %s", fullURL)
+
+	var out TxSearchResponse
+	err := c.doJSON(ctx, http.MethodGet, "/cosmos/tx/v1beta1/txs", q, &out)
+	if err != nil {
+		log.Printf("searchTxsByEvent: error querying %s: %v", fullURL, err)
+		return nil, err
+	}
+
+	// If we got results, return them
+	if len(out.TxResponses) > 0 {
+		log.Printf("searchTxsByEvent: got %d tx_responses for event %s=%s", len(out.TxResponses), eventType, value)
+	}
+
+	return &out, nil
+}
+
+// parseTxResult extracts transaction details and flow information from a transaction result.
+func (c *Client) parseTxResult(action *db.Action, txType string, txResult TxResult, tx *TxResponse, moduleAddr string) *db.ActionTransaction {
+	height, _ := strconv.ParseInt(txResult.Height, 10, 64)
+	gasWanted, _ := strconv.ParseInt(txResult.GasWanted, 10, 64)
+	gasUsed, _ := strconv.ParseInt(txResult.GasUsed, 10, 64)
+
+	// Parse timestamp
+	blockTime, _ := time.Parse(time.RFC3339, txResult.Timestamp)
+
+	actionTx := &db.ActionTransaction{
+		ActionID:  action.ActionID,
+		TxType:    txType,
+		TxHash:    txResult.TxHash,
+		Height:    height,
+		BlockTime: blockTime,
+		GasWanted: &gasWanted,
+		GasUsed:   &gasUsed,
+	}
+
+	// Extract fee information and set TxFee fields
+	if tx != nil && len(tx.AuthInfo.Fee.Amount) > 0 {
+		fee := tx.AuthInfo.Fee.Amount[0]
+		actionTx.TxFee = &fee.Amount
+		actionTx.TxFeeDenom = &fee.Denom
+	}
+
+	// Extract transaction signer from the message
+	txSigner := extractTxSigner(tx)
+
+	// Extract flow information from transfer events
+	flow := c.extractTransferFlow(action, txType, txResult, moduleAddr, txSigner)
+	if flow != nil {
+		actionTx.ActionPrice = flow.Amount
+		actionTx.ActionPriceDenom = flow.Denom
+		actionTx.FlowPayer = flow.Payer
+		actionTx.FlowPayee = flow.Payee
+	}
+
+	return actionTx
+}
+
+// extractTxSigner extracts the transaction signer (creator) from the first message.
+// It looks for common fields like "creator", "sender", or "from_address" in the message.
+func extractTxSigner(tx *TxResponse) string {
+	if tx == nil || len(tx.Body.Messages) == 0 {
+		return ""
+	}
+
+	// Parse the first message to extract signer
+	var msgMap map[string]interface{}
+	if err := json.Unmarshal(tx.Body.Messages[0], &msgMap); err != nil {
+		return ""
+	}
+
+	// Check common signer field names
+	signerFields := []string{"creator", "sender", "from_address", "signer"}
+	for _, field := range signerFields {
+		if val, ok := msgMap[field]; ok {
+			if strVal, ok := val.(string); ok && strVal != "" {
+				return strVal
+			}
+		}
+	}
+
+	return ""
+}
+
+// TransferFlow represents a token transfer in a transaction
+type TransferFlow struct {
+	Amount *string
+	Denom  *string
+	Payer  *string
+	Payee  *string
+}
+
+// extractTransferFlow parses transfer events to identify token flows.
+// For 'register': finds transfer where recipient == Action Module Address (creator pays to module)
+// For 'finalize': finds transfer where sender == Action Module Address AND recipient == tx signer
+// For 'approve': similar to finalize
+func (c *Client) extractTransferFlow(action *db.Action, txType string, txResult TxResult, moduleAddr, txSigner string) *TransferFlow {
+	// Look through all events for transfer events
+	var transfers []TransferFlow
+
+	// Check events at top level
+	for _, event := range txResult.Events {
+		if event.Type == "transfer" {
+			tf := parseTransferEvent(event.Attributes)
+			if tf != nil {
+				transfers = append(transfers, *tf)
+			}
+		}
+	}
+
+	// Also check events in logs (some Cosmos SDK versions put them there)
+	for _, log := range txResult.Logs {
+		for _, event := range log.Events {
+			if event.Type == "transfer" {
+				tf := parseTransferEvent(event.Attributes)
+				if tf != nil {
+					transfers = append(transfers, *tf)
+				}
+			}
+		}
+	}
+
+	if len(transfers) == 0 {
+		return nil
+	}
+
+	// Select the appropriate transfer based on transaction type
+	switch txType {
+	case "register":
+		// For registration, find transfer where recipient == module address
+		// The creator pays the actionPrice to the module account
+		if moduleAddr != "" {
+			for _, tf := range transfers {
+				if tf.Payee != nil && *tf.Payee == moduleAddr {
+					return &tf
+				}
+			}
+		}
+		// Fallback: find transfer where sender == action.Creator
+		for _, tf := range transfers {
+			if tf.Payer != nil && *tf.Payer == action.Creator {
+				return &tf
+			}
+		}
+		// Fallback: return first transfer
+		if len(transfers) > 0 {
+			return &transfers[0]
+		}
+
+	case "finalize", "approve":
+		// For finalize/approve, find transfer where:
+		// sender == module address AND recipient == tx signer (creator of MsgFinalizeAction)
+		// The module pays out to the transaction signer
+		if moduleAddr != "" && txSigner != "" {
+			for _, tf := range transfers {
+				if tf.Payer != nil && *tf.Payer == moduleAddr &&
+					tf.Payee != nil && *tf.Payee == txSigner {
+					return &tf
+				}
+			}
+		}
+		// Fallback: find transfer where sender == module address AND recipient == supernode account
+		if moduleAddr != "" && action.SupernodeAccount != "" {
+			for _, tf := range transfers {
+				if tf.Payer != nil && *tf.Payer == moduleAddr &&
+					tf.Payee != nil && *tf.Payee == action.SupernodeAccount {
+					return &tf
+				}
+			}
+		}
+		// Fallback: find transfer where sender == module address
+		if moduleAddr != "" {
+			for _, tf := range transfers {
+				if tf.Payer != nil && *tf.Payer == moduleAddr {
+					return &tf
+				}
+			}
+		}
+		// Fallback: find transfer where recipient == tx signer
+		if txSigner != "" {
+			for _, tf := range transfers {
+				if tf.Payee != nil && *tf.Payee == txSigner {
+					return &tf
+				}
+			}
+		}
+		// Fallback: find transfer where recipient == supernode account
+		if action.SupernodeAccount != "" {
+			for _, tf := range transfers {
+				if tf.Payee != nil && *tf.Payee == action.SupernodeAccount {
+					return &tf
+				}
+			}
+		}
+		// Alternative: find transfer where sender is NOT the creator (likely module account)
+		for _, tf := range transfers {
+			if tf.Payer != nil && *tf.Payer != action.Creator {
+				return &tf
+			}
+		}
+		// Fallback: return first transfer
+		if len(transfers) > 0 {
+			return &transfers[0]
+		}
+	}
+
+	return nil
+}
+
+// parseTransferEvent extracts transfer details from event attributes.
+// Expects attributes: sender, recipient, amount
+func parseTransferEvent(attrs []Attribute) *TransferFlow {
+	tf := &TransferFlow{}
+
+	for _, attr := range attrs {
+		switch attr.Key {
+		case "sender":
+			tf.Payer = &attr.Value
+		case "recipient":
+			tf.Payee = &attr.Value
+		case "amount":
+			// Amount format: "10090ulume"
+			amount, denom := parseCoinString(attr.Value)
+			if amount != "" {
+				tf.Amount = &amount
+			}
+			if denom != "" {
+				tf.Denom = &denom
+			}
+		}
+	}
+
+	// Only return if we have at least sender or recipient
+	if tf.Payer == nil && tf.Payee == nil {
+		return nil
+	}
+
+	return tf
+}

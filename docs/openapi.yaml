@@ -80,6 +80,11 @@ paths:
               - ACTION_STATE_DONE
               - ACTION_STATE_APPROVED
               - ACTION_STATE_EXPIRED
+        - name: supernode
+          in: query
+          description: Filter actions where the superNodes array contains the provided supernode account address
+          schema:
+            type: string
         - name: from
           in: query
           description: Filter actions from block height
@@ -105,6 +110,12 @@ paths:
           description: Pagination cursor for next page
           schema:
             type: string
+        - name: include_transactions
+          in: query
+          description: Include transaction details (register, finalize, approve) in the response. Default is false.
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Successful response
@@ -635,6 +646,41 @@ components:
           items:
             type: string
             example: lumera1563uuzljqvpanh79w2tvymqsly73v9nwygda73
+        transactions:
+          type: array
+          description: Transaction lifecycle data (register, finalize, approve)
+          items:
+            $ref: '#/components/schemas/Transaction'
+        register_tx_id:
+          type: string
+          nullable: true
+          description: Transaction hash for the register transaction
+          example: "A1B2C3D4E5F6..."
+        register_tx_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Block timestamp for the register transaction
+        finalize_tx_id:
+          type: string
+          nullable: true
+          description: Transaction hash for the finalize transaction
+          example: "B2C3D4E5F6G7..."
+        finalize_tx_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Block timestamp for the finalize transaction
+        approve_tx_id:
+          type: string
+          nullable: true
+          description: Transaction hash for the approve transaction
+          example: "C3D4E5F6G7H8..."
+        approve_tx_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Block timestamp for the approve transaction
 
     ActionDetail:
       type: object
@@ -684,6 +730,41 @@ components:
           type: object
           additionalProperties: true
           description: SuperNode data associated with the action
+        transactions:
+          type: array
+          description: Transaction lifecycle data (register, finalize, approve)
+          items:
+            $ref: '#/components/schemas/Transaction'
+        register_tx_id:
+          type: string
+          nullable: true
+          description: Transaction hash for the register transaction
+          example: "A1B2C3D4E5F6..."
+        register_tx_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Block timestamp for the register transaction
+        finalize_tx_id:
+          type: string
+          nullable: true
+          description: Transaction hash for the finalize transaction
+          example: "B2C3D4E5F6G7..."
+        finalize_tx_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Block timestamp for the finalize transaction
+        approve_tx_id:
+          type: string
+          nullable: true
+          description: Transaction hash for the approve transaction
+          example: "C3D4E5F6G7H8..."
+        approve_tx_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Block timestamp for the approve transaction
         schema_version:
           type: string
           example: v1.0
@@ -700,6 +781,69 @@ components:
           type: string
           description: Price amount as string
           example: "1000000"
+
+    Transaction:
+      type: object
+      description: Transaction data associated with an action's lifecycle
+      properties:
+        tx_type:
+          type: string
+          description: Type of transaction (register, finalize, approve)
+          enum:
+            - register
+            - finalize
+            - approve
+          example: register
+        tx_hash:
+          type: string
+          description: Transaction hash
+          example: "A1B2C3D4E5F6..."
+        height:
+          type: integer
+          format: int64
+          description: Block height of the transaction
+          example: 12345
+        block_time:
+          type: string
+          format: date-time
+          description: Block timestamp
+        gas_wanted:
+          type: integer
+          format: int64
+          description: Gas requested for the transaction
+          example: 200000
+        gas_used:
+          type: integer
+          format: int64
+          description: Gas actually used by the transaction
+          example: 150000
+        action_price:
+          type: string
+          description: Action price amount (for finalize/approve transactions)
+          example: "1000000"
+        action_price_denom:
+          type: string
+          description: Action price denomination
+          example: ulume
+        tx_fee:
+          type: string
+          description: Transaction fee amount
+          example: "5000"
+        tx_fee_denom:
+          type: string
+          description: Transaction fee denomination
+          example: ulume
+        flow_payer:
+          type: string
+          description: Address of the payer in the flow
+        flow_payee:
+          type: string
+          description: Address of the payee in the flow
+      required:
+        - tx_type
+        - tx_hash
+        - height
+        - block_time
 
     CascadeLEP1:
       type: object
@@ -888,7 +1032,6 @@ components:
         supernode_account:
           type: string
           description: Supernode account address
-          example: lumera1abc...
         validator_address:
           type: string
           description: Validator address

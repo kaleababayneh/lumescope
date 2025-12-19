@@ -41,6 +41,8 @@ VALIDATORS_SYNC_INTERVAL="30m"
 SUPERNODES_SYNC_INTERVAL="20m"
 ACTIONS_SYNC_INTERVAL="5m"
 PROBE_INTERVAL="10m"
+ACTION_TX_ENRICHER_INTERVAL="10s"
+ACTION_ENRICHER_START_ID="0"
 
 # --------------------------------------------------
 # Color output helpers
@@ -70,11 +72,13 @@ Options:
   --region REGION                   AWS region (default: us-east-1)
   --service-name NAME               App Runner service name (default: lumescope)
   --lumera-api URL                  Lumera API base URL (default: https://api.lumera.com:1317)
-  --validators-sync-interval INTERVAL   Validators sync interval (default: 30m)
-  --supernodes-sync-interval INTERVAL   Supernodes sync interval (default: 20m)
-  --actions-sync-interval INTERVAL      Actions sync interval (default: 5m)
-  --probe-interval INTERVAL             Probe interval (default: 10m)
-  --skip-build                      Skip Docker image build (use existing image)
+  --validators-sync-interval INTERVAL       Validators sync interval (default: 30m)
+  --supernodes-sync-interval INTERVAL       Supernodes sync interval (default: 20m)
+  --actions-sync-interval INTERVAL          Actions sync interval (default: 5m)
+  --probe-interval INTERVAL                 Probe interval (default: 10m)
+  --action-tx-enricher-interval INTERVAL    Action TX enricher interval (default: 10s)
+  --action-enricher-start-id ID             Action enricher start ID (default: 0)
+  --skip-build                              Skip Docker image build (use existing image)
   --dry-run                         Show what would be done without executing
   --help                            Show this help message
 
@@ -130,6 +134,14 @@ parse_args() {
                 ;;
             --probe-interval)
                 PROBE_INTERVAL="$2"
+                shift 2
+                ;;
+            --action-tx-enricher-interval)
+                ACTION_TX_ENRICHER_INTERVAL="$2"
+                shift 2
+                ;;
+            --action-enricher-start-id)
+                ACTION_ENRICHER_START_ID="$2"
                 shift 2
                 ;;
             --skip-build)
@@ -346,7 +358,9 @@ deploy_app_runner() {
                 "VALIDATORS_SYNC_INTERVAL": "${VALIDATORS_SYNC_INTERVAL}",
                 "SUPERNODES_SYNC_INTERVAL": "${SUPERNODES_SYNC_INTERVAL}",
                 "ACTIONS_SYNC_INTERVAL": "${ACTIONS_SYNC_INTERVAL}",
-                "PROBE_INTERVAL": "${PROBE_INTERVAL}"
+                "PROBE_INTERVAL": "${PROBE_INTERVAL}",
+                "ACTION_TX_ENRICHER_INTERVAL": "${ACTION_TX_ENRICHER_INTERVAL}",
+                "ACTION_ENRICHER_START_ID": "${ACTION_ENRICHER_START_ID}"
             }
         },
         "ImageRepositoryType": "ECR"
@@ -455,10 +469,12 @@ print_summary() {
     echo "App Port:         ${APP_PORT}"
     echo ""
     echo "Background Worker Intervals:"
-    echo "  Validators Sync: ${VALIDATORS_SYNC_INTERVAL}"
-    echo "  Supernodes Sync: ${SUPERNODES_SYNC_INTERVAL}"
-    echo "  Actions Sync:    ${ACTIONS_SYNC_INTERVAL}"
-    echo "  Probe:           ${PROBE_INTERVAL}"
+    echo "  Validators Sync:       ${VALIDATORS_SYNC_INTERVAL}"
+    echo "  Supernodes Sync:       ${SUPERNODES_SYNC_INTERVAL}"
+    echo "  Actions Sync:          ${ACTIONS_SYNC_INTERVAL}"
+    echo "  Probe:                 ${PROBE_INTERVAL}"
+    echo "  Action TX Enricher:    ${ACTION_TX_ENRICHER_INTERVAL}"
+    echo "  Action Enricher Start: ${ACTION_ENRICHER_START_ID}"
     echo ""
     if [[ "$DRY_RUN" != "true" ]]; then
         echo "Service URL:      https://${SERVICE_URL}"

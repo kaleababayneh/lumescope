@@ -12,17 +12,69 @@ import (
 	"lumescope/internal/util"
 )
 
+// TransactionDTO represents transaction data in API responses
+type TransactionDTO struct {
+	TxType           string     `json:"tx_type"`
+	TxHash           string     `json:"tx_hash"`
+	Height           int64      `json:"height"`
+	BlockTime        time.Time  `json:"block_time"`
+	GasWanted        *int64     `json:"gas_wanted,omitempty"`
+	GasUsed          *int64     `json:"gas_used,omitempty"`
+	ActionPrice      *string    `json:"action_price,omitempty"`
+	ActionPriceDenom *string    `json:"action_price_denom,omitempty"`
+	FlowPayer        *string    `json:"flow_payer,omitempty"`
+	FlowPayee        *string    `json:"flow_payee,omitempty"`
+	TxFee            *string    `json:"tx_fee,omitempty"`
+	TxFeeDenom       *string    `json:"tx_fee_denom,omitempty"`
+}
+
+// PlaceholderTxHash is used to mark actions that have been checked but have no
+// transactions on chain. This allows the enricher to skip them in future runs.
+const PlaceholderTxHash = "_NO_TX_FOUND_"
+
+// isPlaceholderTransaction returns true if the transaction is a placeholder
+// inserted by the enricher to mark "not found" cases.
+func isPlaceholderTransaction(tx db.ActionTransaction) bool {
+	return tx.TxHash == PlaceholderTxHash
+}
+
+// actionTransactionToDTO converts a db.ActionTransaction to TransactionDTO
+func actionTransactionToDTO(tx db.ActionTransaction) TransactionDTO {
+	return TransactionDTO{
+		TxType:           tx.TxType,
+		TxHash:           tx.TxHash,
+		Height:           tx.Height,
+		BlockTime:        tx.BlockTime,
+		GasWanted:        tx.GasWanted,
+		GasUsed:          tx.GasUsed,
+		ActionPrice:      tx.ActionPrice,
+		ActionPriceDenom: tx.ActionPriceDenom,
+		FlowPayer:        tx.FlowPayer,
+		FlowPayee:        tx.FlowPayee,
+		TxFee:            tx.TxFee,
+		TxFeeDenom:       tx.TxFeeDenom,
+	}
+}
+
 type ActionItem struct {
-	ID          string      `json:"id"`
-	Type        string      `json:"type"`
-	Creator     string      `json:"creator"`
-	State       string      `json:"state"`
-	BlockHeight int64       `json:"block_height"`
-	MimeType    string      `json:"mime_type,omitempty"`
-	Size        int64       `json:"size"`
-	Price       Price       `json:"price"`
-	Decoded     interface{} `json:"decoded,omitempty"`
-	Raw         string      `json:"raw,omitempty"` // base64 of raw bytes if unknown type
+	ID           string           `json:"id"`
+	Type         string           `json:"type"`
+	Creator      string           `json:"creator"`
+	State        string           `json:"state"`
+	BlockHeight  int64            `json:"block_height"`
+	MimeType     string           `json:"mime_type,omitempty"`
+	Size         int64            `json:"size"`
+	Price        Price            `json:"price"`
+	Decoded      interface{}      `json:"decoded,omitempty"`
+	Raw          string           `json:"raw,omitempty"` // base64 of raw bytes if unknown type
+	// Flattened transaction fields for convenience
+	RegisterTxID     *string    `json:"register_tx_id,omitempty"`
+	RegisterTxTime   *time.Time `json:"register_tx_time,omitempty"`
+	FinalizeTxID     *string    `json:"finalize_tx_id,omitempty"`
+	FinalizeTxTime   *time.Time `json:"finalize_tx_time,omitempty"`
+	ApproveTxID      *string    `json:"approve_tx_id,omitempty"`
+	ApproveTxTime    *time.Time `json:"approve_tx_time,omitempty"`
+	Transactions     []TransactionDTO `json:"transactions,omitempty"`
 }
 
 type ActionsListResponse struct {
@@ -48,6 +100,10 @@ func ListActions(pool *db.Pool) http.HandlerFunc {
 		if stateStr := queryValues.Get("state"); stateStr != "" {
 			filterState := stateStr
 			filter.State = &filterState
+		}
+		if supernodeStr := queryValues.Get("supernode"); supernodeStr != "" {
+			filterSupernode := supernodeStr
+			filter.Supernode = &filterSupernode
 		}
 
 		limit := 50
@@ -107,9 +163,20 @@ func ListActions(pool *db.Pool) http.HandlerFunc {
 			}
 			parsedCursorTS = parsedCursorTS.UTC()
 			cursorTime := parsedCursorTS
-			cursorID := payload.ID
+			// Parse cursor ID as uint64
+			cursorIDVal, err := strconv.ParseUint(payload.ID, 10, 64)
+			if err != nil {
+				util.WriteJSONError(w, http.StatusBadRequest, "invalid cursor ID: must be numeric")
+				return
+			}
 			filter.CursorTS = &cursorTime
-			filter.CursorID = &cursorID
+			filter.CursorID = &cursorIDVal
+		}
+
+		// Parse include_transactions parameter (default: false)
+		includeTransactions := false
+		if includeTxStr := queryValues.Get("include_transactions"); includeTxStr != "" {
+			includeTransactions = includeTxStr == "true" || includeTxStr == "1"
 		}
 
 		actions, hasMore, err := db.ListActionsFiltered(r.Context(), pool, filter)
@@ -118,10 +185,25 @@ func ListActions(pool *db.Pool) http.HandlerFunc {
 			return
 		}
 
+		// Always fetch transactions to populate flattened fields (register_tx_id, etc.)
+		// Collect action IDs for bulk transaction fetch
+		actionIDs := make([]uint64, 0, len(actions))
+		for _, a := range actions {
+			actionIDs = append(actionIDs, a.ActionID)
+		}
+
+		txMap, err := db.GetActionTransactionsByActionIDs(r.Context(), pool, actionIDs)
+		if err != nil {
+			util.WriteJSONError(w, http.StatusInternalServerError, "failed to fetch action transactions")
+			return
+		}
+
 		items := make([]ActionItem, 0, len(actions))
 		for _, a := range actions {
+			// Convert uint64 ActionID to string for JSON response
+			actionIDStr := strconv.FormatUint(a.ActionID, 10)
 			item := ActionItem{
-				ID:          a.ActionID,
+				ID:          actionIDStr,
 				Type:        a.ActionType,
 				Creator:     a.Creator,
 				State:       a.State,
@@ -141,6 +223,42 @@ func ListActions(pool *db.Pool) http.HandlerFunc {
 				item.Raw = base64.StdEncoding.EncodeToString(a.MetadataRaw)
 			}
 
+			// Always populate flattened fields from transactions
+			// Filter out placeholder transactions (_NO_TX_FOUND_) from API responses
+			if txs, ok := txMap[a.ActionID]; ok && len(txs) > 0 {
+				var txDTOs []TransactionDTO
+				if includeTransactions {
+					txDTOs = make([]TransactionDTO, 0, len(txs))
+				}
+				for _, tx := range txs {
+					// Skip placeholder transactions
+					if isPlaceholderTransaction(tx) {
+						continue
+					}
+					if includeTransactions {
+						txDTOs = append(txDTOs, actionTransactionToDTO(tx))
+					}
+					// Always populate flattened transaction fields
+					txHash := tx.TxHash
+					txTime := tx.BlockTime
+					switch tx.TxType {
+					case "register":
+						item.RegisterTxID = &txHash
+						item.RegisterTxTime = &txTime
+					case "finalize":
+						item.FinalizeTxID = &txHash
+						item.FinalizeTxTime = &txTime
+					case "approve":
+						item.ApproveTxID = &txHash
+						item.ApproveTxTime = &txTime
+					}
+				}
+				// Only include Transactions array if requested
+				if includeTransactions {
+					item.Transactions = txDTOs
+				}
+			}
+
 			items = append(items, item)
 		}
 
@@ -156,7 +274,7 @@ func ListActions(pool *db.Pool) http.HandlerFunc {
 				ID string `json:"id"`
 			}{
 				TS: last.CreatedAt.UTC().Format(time.RFC3339),
-				ID: last.ActionID,
+				ID: strconv.FormatUint(last.ActionID, 10),
 			}
 			cursorJSON, err := json.Marshal(cursorPayload)
 			if err != nil {
@@ -173,9 +291,16 @@ func ListActions(pool *db.Pool) http.HandlerFunc {
 
 func GetAction(pool *db.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id := actionIDFromPath(r.URL.Path)
-		if id == "" {
+		idStr := actionIDFromPath(r.URL.Path)
+		if idStr == "" {
 			util.WriteJSONError(w, http.StatusBadRequest, "invalid action ID")
+			return
+		}
+
+		// Parse string ID to uint64
+		id, err := strconv.ParseUint(idStr, 10, 64)
+		if err != nil {
+			util.WriteJSONError(w, http.StatusBadRequest, "invalid action ID: must be numeric")
 			return
 		}
 
@@ -189,35 +314,86 @@ func GetAction(pool *db.Pool) http.HandlerFunc {
 			return
 		}
 
+		// Fetch transactions for this action
+		transactions, err := db.GetActionTransactions(r.Context(), pool, id)
+		if err != nil {
+			util.WriteJSONError(w, http.StatusInternalServerError, "failed to fetch action transactions")
+			return
+		}
+
+		// Convert transactions to DTOs and extract flattened fields
+		// Filter out placeholder transactions (_NO_TX_FOUND_) from API responses
+		var txDTOs []TransactionDTO
+		var registerTxID, finalizeTxID, approveTxID *string
+		var registerTxTime, finalizeTxTime, approveTxTime *time.Time
+		if len(transactions) > 0 {
+			txDTOs = make([]TransactionDTO, 0, len(transactions))
+			for _, tx := range transactions {
+				// Skip placeholder transactions
+				if isPlaceholderTransaction(tx) {
+					continue
+				}
+				txDTOs = append(txDTOs, actionTransactionToDTO(tx))
+				// Populate flattened transaction fields
+				txHash := tx.TxHash
+				txTime := tx.BlockTime
+				switch tx.TxType {
+				case "register":
+					registerTxID = &txHash
+					registerTxTime = &txTime
+				case "finalize":
+					finalizeTxID = &txHash
+					finalizeTxTime = &txTime
+				case "approve":
+					approveTxID = &txHash
+					approveTxTime = &txTime
+				}
+			}
+		}
+
 		// Build response with action details
 		resp := struct {
-			ID            string      `json:"id"`
-			Type          string      `json:"type"`
-			Creator       string      `json:"creator"`
-			State         string      `json:"state"`
-			BlockHeight   int64       `json:"block_height"`
-			MimeType      string      `json:"mime_type,omitempty"`
-			Size          int64       `json:"size"`
-			Price         Price       `json:"price"`
-			Timestamp     time.Time   `json:"timestamp"`
-			Decoded       interface{} `json:"decoded,omitempty"`
-			Raw           string      `json:"raw,omitempty"`
-			SuperNodes    interface{} `json:"super_nodes,omitempty"`
-			SchemaVersion string      `json:"schema_version"`
+			ID             string           `json:"id"`
+			Type           string           `json:"type"`
+			Creator        string           `json:"creator"`
+			State          string           `json:"state"`
+			BlockHeight    int64            `json:"block_height"`
+			MimeType       string           `json:"mime_type,omitempty"`
+			Size           int64            `json:"size"`
+			Price          Price            `json:"price"`
+			Timestamp      time.Time        `json:"timestamp"`
+			Decoded        interface{}      `json:"decoded,omitempty"`
+			Raw            string           `json:"raw,omitempty"`
+			SuperNodes     interface{}      `json:"super_nodes,omitempty"`
+			RegisterTxID   *string          `json:"register_tx_id,omitempty"`
+			RegisterTxTime *time.Time       `json:"register_tx_time,omitempty"`
+			FinalizeTxID   *string          `json:"finalize_tx_id,omitempty"`
+			FinalizeTxTime *time.Time       `json:"finalize_tx_time,omitempty"`
+			ApproveTxID    *string          `json:"approve_tx_id,omitempty"`
+			ApproveTxTime  *time.Time       `json:"approve_tx_time,omitempty"`
+			Transactions   []TransactionDTO `json:"transactions,omitempty"`
+			SchemaVersion  string           `json:"schema_version"`
 		}{
-			ID:          action.ActionID,
-			Type:        action.ActionType,
-			Creator:     action.Creator,
-			State:       action.State,
-			BlockHeight: action.BlockHeight,
-			MimeType:    action.MimeType,
-			Size:        action.Size,
+			ID:             strconv.FormatUint(action.ActionID, 10),
+			Type:           action.ActionType,
+			Creator:        action.Creator,
+			State:          action.State,
+			BlockHeight:    action.BlockHeight,
+			MimeType:       action.MimeType,
+			Size:           action.Size,
 			Price: Price{
 				Denom:  action.PriceDenom,
 				Amount: action.PriceAmount,
 			},
-			Timestamp:     time.Unix(action.BlockHeight, 0).UTC(),
-			SchemaVersion: "v1.0",
+			Timestamp:      time.Unix(action.BlockHeight, 0).UTC(),
+			RegisterTxID:   registerTxID,
+			RegisterTxTime: registerTxTime,
+			FinalizeTxID:   finalizeTxID,
+			FinalizeTxTime: finalizeTxTime,
+			ApproveTxID:    approveTxID,
+			ApproveTxTime:  approveTxTime,
+			Transactions:   txDTOs,
+			SchemaVersion:  "v1.0",
 		}
 
 		// Add decoded metadata if available

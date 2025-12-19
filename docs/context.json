@@ -15,14 +15,14 @@
       {
         "path": "/v1/actions",
         "status": "implemented",
-        "evidence": ["internal/handlers/actions.go:31-166", "internal/server/router.go:34-44"],
-        "notes": "Handler fully connected to database via db.ListActionsFiltered. Supports filters (type, creator, state, from/to block height), pagination with cursor, and returns decoded metadata from DB. Includes mime_type, size, and price fields. Price is returned as {\"amount\": string, \"denom\": string}."
+        "evidence": ["internal/handlers/actions.go:69-240", "internal/server/router.go:34-44"],
+        "notes": "Handler fully connected to database via db.ListActionsFiltered. Supports filters (type, creator, state, supernode, from/to block height), pagination with cursor, and returns decoded metadata from DB. Includes mime_type, size, price fields, and transactions array. Price is returned as {\"amount\": string, \"denom\": string}. The supernode filter uses JSONB containment to find actions where the superNodes array contains the specified address. Transaction lifecycle data (register, finalize, approve) is bulk-fetched via GetActionTransactionsByActionIDs to avoid N+1 queries. Flattened transaction fields (register_tx_id, register_tx_time, finalize_tx_id, finalize_tx_time, approve_tx_id, approve_tx_time) are included for quick access to key transaction data. Transaction objects include action_price/action_price_denom (renamed from flow_amount/flow_denom) and tx_fee/tx_fee_denom fields. Module account addresses are resolved to human-readable names (e.g., action_fee_escrow)."
       },
       {
         "path": "/v1/actions/{id}",
         "status": "implemented",
-        "evidence": ["internal/handlers/actions.go:165-230", "internal/server/router.go:56-68"],
-        "notes": "Handler connected to database via db.GetActionByID. Returns action details with decoded metadata, price info, super_nodes list, mime_type, and size from DB."
+        "evidence": ["internal/handlers/actions.go:243-330", "internal/server/router.go:56-68"],
+        "notes": "Handler connected to database via db.GetActionByID. Returns action details with decoded metadata, price info, super_nodes list, mime_type, size, and transactions array from DB. Transaction lifecycle data fetched via db.GetActionTransactions. Includes flattened transaction fields (register_tx_id, register_tx_time, finalize_tx_id, finalize_tx_time, approve_tx_id, approve_tx_time). Transaction objects include action_price/action_price_denom and tx_fee/tx_fee_denom fields with module account resolution."
       },
       {
         "path": "/v1/actions/stats",
@@ -177,7 +177,7 @@
         {
           "name": "ListActionsFiltered",
           "evidence": ["internal/db/db.go:696-796"],
-          "notes": "Filtered list with keyset pagination, supports type, creator, state, fromHeight, toHeight filters. Returns mimeType and size fields."
+          "notes": "Filtered list with keyset pagination, supports type, creator, state, supernode, fromHeight, toHeight filters. Returns mimeType and size fields. The supernode filter uses JSONB containment (@>) to find actions where superNodes array contains the specified address."
         },
         {
           "name": "GetActionByID",
@@ -208,6 +208,16 @@
           "name": "GetAggregatedHardwareStats",
           "evidence": ["internal/db/db.go"],
           "notes": "Returns aggregated hardware statistics for /v1/supernodes/stats endpoint"
+        },
+        {
+          "name": "GetActionTransactions",
+          "evidence": ["internal/db/db.go:1296-1334"],
+          "notes": "Fetches all transactions for a given action ID ordered by height ascending"
+        },
+        {
+          "name": "GetActionTransactionsByActionIDs",
+          "evidence": ["internal/db/db.go:1489-1545"],
+          "notes": "Bulk fetches transactions for multiple action IDs to avoid N+1 queries. Returns map[actionID][]ActionTransaction."
         }
       ],
       "notes": "PostgreSQL via pgx driver. Schema includes JSONB fields for flexible metadata storage. All API handlers ARE connected to DB queries."
@@ -247,16 +257,16 @@
   "feature_status": {
     "GET /v1/actions": {
       "status": "implemented",
-      "notes": "Endpoint fully connected to database via db.ListActionsFiltered. Supports filters (type, creator, state, from/to block height), keyset pagination with cursor, Last-Modified header (uses current time, not DB timestamps), and returns decoded metadata from DB. Includes mime_type, size, and price fields. Price object format: {\"amount\": string, \"denom\": string}.",
-      "evidence": ["internal/handlers/actions.go:31-166", "internal/db/db.go:696-796"],
-      "implemented": ["DB query with filters", "Keyset pagination", "Type/creator/state filters", "Block height range filters", "Decoded metadata from DB", "Schema version field", "Last-Modified header (present but uses current time)", "mime_type field (extracted from file extension)", "size field (in bytes)", "price object (amount, denom)"],
+      "notes": "Endpoint fully connected to database via db.ListActionsFiltered. Supports filters (type, creator, state, supernode, from/to block height), keyset pagination with cursor, Last-Modified header (uses current time, not DB timestamps), and returns decoded metadata from DB. Includes mime_type, size, price fields, and transactions array. Price object format: {\"amount\": string, \"denom\": string}. The supernode filter uses JSONB containment to find actions where superNodes array contains the specified address. Transaction lifecycle data (register, finalize, approve) bulk-fetched via GetActionTransactionsByActionIDs to avoid N+1 queries. Includes flattened transaction fields (register_tx_id/time, finalize_tx_id/time, approve_tx_id/time), renamed action_price/action_price_denom fields, tx_fee/tx_fee_denom fields, and module account resolution.",
+      "evidence": ["internal/handlers/actions.go:69-240", "internal/db/db.go:696-810", "internal/db/db.go:1489-1545"],
+      "implemented": ["DB query with filters", "Keyset pagination", "Type/creator/state filters", "Supernode filter (JSONB containment)", "Block height range filters", "Decoded metadata from DB", "Schema version field", "Last-Modified header (present but uses current time)", "mime_type field (extracted from file extension)", "size field (in bytes)", "price object (amount, denom)", "transactions array (tx_type, tx_hash, height, block_time, gas, fees, action_price, tx_fee)", "flattened transaction fields (register_tx_id/time, finalize_tx_id/time, approve_tx_id/time)", "module account resolution"],
       "remaining": ["ETag based on actual DB timestamps (currently uses current time)", "Redis caching layer"]
     },
     "GET /v1/actions/{id}": {
       "status": "implemented",
-      "notes": "Endpoint connected to database via db.GetActionByID. Returns full action details with decoded metadata, price info, super_nodes list, mime_type, and size.",
-      "evidence": ["internal/handlers/actions.go:165-230", "internal/db/db.go:798-828"],
-      "implemented": ["DB query by actionID", "Decoded metadata JSON", "Price info", "SuperNodes array", "Schema version", "mime_type field (extracted from file extension)", "size field (in bytes)"],
+      "notes": "Endpoint connected to database via db.GetActionByID. Returns full action details with decoded metadata, price info, super_nodes list, mime_type, size, and transactions array. Transaction lifecycle data fetched via db.GetActionTransactions. Includes flattened transaction fields (register_tx_id/time, finalize_tx_id/time, approve_tx_id/time), renamed action_price/action_price_denom fields, tx_fee/tx_fee_denom fields, and module account resolution.",
+      "evidence": ["internal/handlers/actions.go:243-330", "internal/db/db.go:798-828", "internal/db/db.go:1296-1334"],
+      "implemented": ["DB query by actionID", "Decoded metadata JSON", "Price info", "SuperNodes array", "Schema version", "mime_type field (extracted from file extension)", "size field (in bytes)", "transactions array (tx_type, tx_hash, height, block_time, gas, fees, action_price, tx_fee)", "flattened transaction fields (register_tx_id/time, finalize_tx_id/time, approve_tx_id/time)", "module account resolution"],
       "remaining": ["LEP1 Cascade layout resolver (file descriptors)"]
     },
     "GET /v1/actions/stats": {
@@ -330,5 +340,5 @@
       "No GraphQL facade (extended feature)"
     ]
   },
-  "last_updated": "2025-12-12T20:44:00Z"
+  "last_updated": "2025-12-18T07:36:00Z"
 }

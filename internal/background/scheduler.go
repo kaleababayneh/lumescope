@@ -43,6 +43,7 @@ func (r *Runner) Start(ctx context.Context) {
 	go r.loopSupernodes(ctx)
 	go r.loopActions(ctx)
 	go r.loopProbes(ctx)
+	go r.loopActionTxEnricher(ctx)
 }
 
 func (r *Runner) loopValidators(ctx context.Context) {
@@ -103,6 +104,147 @@ func (r *Runner) loopProbes(ctx context.Context) {
 		case <-t.C:
 		}
 	}
+}
+
+// loopActionTxEnricher runs the action transaction enricher on a configurable interval.
+// It iterates through all actions and fetches their transaction lifecycle details.
+func (r *Runner) loopActionTxEnricher(ctx context.Context) {
+	// Wait a bit before starting to let the initial sync complete
+	time.Sleep(30 * time.Second)
+
+	t := time.NewTicker(r.Cfg.ActionTxEnricherInterval)
+	defer t.Stop()
+	for {
+		if err := r.runActionTxEnricher(ctx); err != nil {
+			log.Printf("action tx enricher error: %v", err)
+		}
+
+		// After completing a full pass, drain any pending ticks that accumulated
+		// during processing. This ensures we wait for a fresh interval before
+		// starting the next pass, preventing immediate restarts.
+		drainTicker(t)
+
+		// Now wait for the next tick interval
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// drainTicker removes any pending ticks from the ticker channel without blocking.
+func drainTicker(t *time.Ticker) {
+	for {
+		select {
+		case <-t.C:
+			// Tick drained, check for more
+		default:
+			// No more pending ticks
+			return
+		}
+	}
+}
+
+// runActionTxEnricher iterates through unenriched actions and enriches them with transaction data.
+// It uses GetUnenrichedActions which only returns actions without a 'register' transaction,
+// making the enricher much more efficient by skipping already-processed actions at the DB level.
+func (r *Runner) runActionTxEnricher(ctx context.Context) error {
+	const batchSize = 50
+	// Initialize minID based on ActionEnricherStartID config.
+	minID := r.Cfg.ActionEnricherStartID
+	var totalProcessed, totalEnriched, totalNotFound int
+
+	log.Printf("action tx enricher: starting run (minID=%d)", minID)
+	startTime := time.Now()
+
+	batchNum := 0
+	for {
+		batchNum++
+		log.Printf("action tx enricher: fetching batch %d with minID=%d, batchSize=%d", batchNum, minID, batchSize)
+
+		// Fetch only unenriched actions (no 'register' transaction yet)
+		actions, err := db.GetUnenrichedActions(ctx, r.DB, minID, batchSize)
+		if err != nil {
+			log.Printf("action tx enricher: GetUnenrichedActions error: %v", err)
+			return err
+		}
+
+		log.Printf("action tx enricher: GetUnenrichedActions returned %d actions needing enrichment", len(actions))
+
+		if len(actions) == 0 {
+			log.Printf("action tx enricher: no unenriched actions found, breaking loop")
+			break
+		}
+
+		for i, action := range actions {
+			totalProcessed++
+
+			// Update minID for next batch
+			// ActionID is now uint64, no parsing needed
+			// We use action.ActionID+1 since GetUnenrichedActions uses >= comparison
+			minID = action.ActionID + 1
+
+			log.Printf("action tx enricher: processing action %d/%d in batch %d: actionID=%d state=%s",
+				i+1, len(actions), batchNum, action.ActionID, action.State)
+
+			// Fetch transaction details from chain
+			txs, err := r.Lumera.GetActionTransactions(ctx, &action)
+			if err != nil {
+				log.Printf("action tx enricher: error fetching txs for action %d: %v", action.ActionID, err)
+				continue
+			}
+
+			log.Printf("action tx enricher: GetActionTransactions returned %d txs for action %d", len(txs), action.ActionID)
+
+			// Handle "not found" case: if no transactions returned, insert a placeholder
+			// This marks the action as "checked" so the DB query excludes it next time
+			if len(txs) == 0 {
+				totalNotFound++
+				log.Printf("action tx enricher: no txs found for action %d, inserting placeholder", action.ActionID)
+				placeholder := &db.ActionTransaction{
+					ActionID:  action.ActionID,
+					TxType:    "register",
+					TxHash:    "_NO_TX_FOUND_",
+					Height:    0,
+					BlockTime: action.CreatedAt,
+				}
+				if err := db.UpsertActionTransaction(ctx, r.DB, placeholder); err != nil {
+					log.Printf("action tx enricher: error persisting placeholder for action %d: %v", action.ActionID, err)
+				} else {
+					log.Printf("action tx enricher: persisted placeholder for action %d", action.ActionID)
+				}
+				continue
+			}
+
+			// Persist transaction records
+			for _, tx := range txs {
+				if err := db.UpsertActionTransaction(ctx, r.DB, tx); err != nil {
+					log.Printf("action tx enricher: error persisting tx for action %d type %s: %v",
+						action.ActionID, tx.TxType, err)
+				} else {
+					log.Printf("action tx enricher: persisted tx for action %d type %s", action.ActionID, tx.TxType)
+					totalEnriched++
+				}
+			}
+		}
+
+		// If we got fewer than batchSize, we've reached the end
+		if len(actions) < batchSize {
+			log.Printf("action tx enricher: got %d actions < batchSize %d, reached end of data", len(actions), batchSize)
+			break
+		}
+
+		// Small delay between batches to avoid hammering the chain API
+		log.Printf("action tx enricher: sleeping 100ms before next batch")
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	elapsed := time.Since(startTime)
+	log.Printf("action tx enricher: completed run - processed %d unenriched actions, enriched %d txs, %d not found on chain, in %v",
+		totalProcessed, totalEnriched, totalNotFound, elapsed)
+
+	return nil
 }
 
 // syncValidators returns a map of valoper -> moniker to be used in supernode join.
@@ -213,8 +355,15 @@ func (r *Runner) syncActions(ctx context.Context) error {
 			// Size is not available in metadata, default to 0
 			mimeType := extractMimeType(decoded)
 
+			// Parse ActionID from string (API response) to uint64 (DB model)
+			actionID, err := strconv.ParseUint(a.ActionID, 10, 64)
+			if err != nil {
+				log.Printf("parse action ID %s: %v", a.ActionID, err)
+				continue
+			}
+
 			rec := db.ActionDB{
-				ActionID:       a.ActionID,
+				ActionID:       actionID,
 				Creator:        a.Creator,
 				ActionType:     a.ActionType,
 				State:          a.State,
@@ -229,7 +378,7 @@ func (r *Runner) syncActions(ctx context.Context) error {
 				Size:           0, // Size not available in metadata
 			}
 			if err := db.UpsertAction(ctx, r.DB, rec); err != nil {
-				log.Printf("upsert action %s: %v", a.ActionID, err)
+				log.Printf("upsert action %d: %v", actionID, err)
 			}
 		}
 		if n == "" {
@@ -582,7 +731,7 @@ type statusSummary struct {
 
 func fetchStatus(ctx context.Context, host string) statusSummary {
 	client := &http.Client{Timeout: 6 * time.Second}
-	url := "http://" + net.JoinHostPort(host, "8002") + "/api/v1/status"
+	url := "http://" + net.JoinHostPort(host, "8002") + "/api/v1/status?includeP2pMetrics=true"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return statusSummary{Available: false}

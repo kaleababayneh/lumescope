@@ -11,6 +11,24 @@
       "description": "Current server"
     }
   ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "Health and readiness endpoints"
+    },
+    {
+      "name": "Actions",
+      "description": "Blockchain action operations"
+    },
+    {
+      "name": "Supernodes",
+      "description": "Supernode metrics and monitoring"
+    },
+    {
+      "name": "Version",
+      "description": "Version and compatibility information"
+    }
+  ],
   "paths": {
     "/healthz": {
       "get": {
@@ -109,6 +127,14 @@
             }
           },
           {
+            "name": "supernode",
+            "in": "query",
+            "description": "Filter actions where the superNodes array contains the provided supernode account address",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "from",
             "in": "query",
             "description": "Filter actions from block height",
@@ -143,6 +169,15 @@
             "description": "Pagination cursor for next page",
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "include_transactions",
+            "in": "query",
+            "description": "Include transaction details (register, finalize, approve) in the response. Default is false.",
+            "schema": {
+              "type": "boolean",
+              "default": false
             }
           }
         ],
@@ -206,7 +241,7 @@
     "/v1/actions/stats": {
       "get": {
         "summary": "Get global action statistics",
-        "description": "Retrieve aggregated action statistics for all actions (global). Returns total count, a breakdown by state (PENDING, DONE, APPROVED, EXPIRED), and MIME type statistics with count and average file size. Supports optional time filtering via `from` and `to` parameters.",
+        "description": "Retrieve aggregated action statistics for all actions (global).\nReturns total count, a breakdown by state (PENDING, DONE, APPROVED, EXPIRED),\nand MIME type statistics with count and average file size.\nSupports optional time filtering via `from` and `to` parameters.\n",
         "operationId": "getActionStats",
         "tags": [
           "Actions"
@@ -292,7 +327,7 @@
           {
             "name": "currentState",
             "in": "query",
-            "description": "Filter by the on-chain state of supernodes. Uses exact enum values from the Lumera chain.",
+            "description": "Filter by the on-chain state of supernodes. Uses exact enum values from the Lumera chain.\n",
             "schema": {
               "type": "string",
               "enum": [
@@ -307,7 +342,7 @@
           {
             "name": "status",
             "in": "query",
-            "description": "Filter by availability status. When 'available', returns only supernodes where all 3 ports are open: Status API (port 8002), Port1 (from ipAddress), P2P port (4445). When 'unavailable', returns supernodes where at least one port is not open.",
+            "description": "Filter by availability status. When 'available', returns only supernodes where all 3 ports are open:\n- Status API (port 8002)\n- Port1 (from ipAddress)\n- P2P port (4445)\nWhen 'unavailable', returns supernodes where at least one port is not open.\n",
             "schema": {
               "type": "string",
               "enum": [
@@ -539,7 +574,7 @@
     "/v1/supernodes/action-stats": {
       "get": {
         "summary": "Get action statistics for a supernode",
-        "description": "Retrieve aggregated action statistics for a specific supernode address. Returns counts grouped by action state for all actions where the supernode is listed in the superNodes array.",
+        "description": "Retrieve aggregated action statistics for a specific supernode address.\nReturns counts grouped by action state for all actions where the supernode\nis listed in the superNodes array.\n",
         "operationId": "getSupernodeActionStats",
         "tags": [
           "Supernodes"
@@ -772,13 +807,13 @@
             "type": "number",
             "format": "double",
             "description": "Percentage of storage used (used / total * 100)",
-            "example": 50.0
+            "example": 50
           },
           "storage_available_percent": {
             "type": "number",
             "format": "double",
             "description": "Percentage of storage available (available / total * 100)",
-            "example": 50.0
+            "example": 50
           },
           "available_supernodes": {
             "type": "integer",
@@ -871,6 +906,49 @@
               "type": "string",
               "example": "lumera1563uuzljqvpanh79w2tvymqsly73v9nwygda73"
             }
+          },
+          "transactions": {
+            "type": "array",
+            "description": "Transaction lifecycle data (register, finalize, approve)",
+            "items": {
+              "$ref": "#/components/schemas/Transaction"
+            }
+          },
+          "register_tx_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Transaction hash for the register transaction",
+            "example": "A1B2C3D4E5F6..."
+          },
+          "register_tx_time": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Block timestamp for the register transaction"
+          },
+          "finalize_tx_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Transaction hash for the finalize transaction",
+            "example": "B2C3D4E5F6G7..."
+          },
+          "finalize_tx_time": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Block timestamp for the finalize transaction"
+          },
+          "approve_tx_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Transaction hash for the approve transaction",
+            "example": "C3D4E5F6G7H8..."
+          },
+          "approve_tx_time": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Block timestamp for the approve transaction"
           }
         }
       },
@@ -934,6 +1012,49 @@
             "additionalProperties": true,
             "description": "SuperNode data associated with the action"
           },
+          "transactions": {
+            "type": "array",
+            "description": "Transaction lifecycle data (register, finalize, approve)",
+            "items": {
+              "$ref": "#/components/schemas/Transaction"
+            }
+          },
+          "register_tx_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Transaction hash for the register transaction",
+            "example": "A1B2C3D4E5F6..."
+          },
+          "register_tx_time": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Block timestamp for the register transaction"
+          },
+          "finalize_tx_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Transaction hash for the finalize transaction",
+            "example": "B2C3D4E5F6G7..."
+          },
+          "finalize_tx_time": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Block timestamp for the finalize transaction"
+          },
+          "approve_tx_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Transaction hash for the approve transaction",
+            "example": "C3D4E5F6G7H8..."
+          },
+          "approve_tx_time": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "description": "Block timestamp for the approve transaction"
+          },
           "schema_version": {
             "type": "string",
             "example": "v1.0"
@@ -955,6 +1076,84 @@
             "example": "1000000"
           }
         }
+      },
+      "Transaction": {
+        "type": "object",
+        "description": "Transaction data associated with an action's lifecycle",
+        "properties": {
+          "tx_type": {
+            "type": "string",
+            "description": "Type of transaction (register, finalize, approve)",
+            "enum": [
+              "register",
+              "finalize",
+              "approve"
+            ],
+            "example": "register"
+          },
+          "tx_hash": {
+            "type": "string",
+            "description": "Transaction hash",
+            "example": "A1B2C3D4E5F6..."
+          },
+          "height": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Block height of the transaction",
+            "example": 12345
+          },
+          "block_time": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Block timestamp"
+          },
+          "gas_wanted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Gas requested for the transaction",
+            "example": 200000
+          },
+          "gas_used": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Gas actually used by the transaction",
+            "example": 150000
+          },
+          "action_price": {
+            "type": "string",
+            "description": "Action price amount (for finalize/approve transactions)",
+            "example": "1000000"
+          },
+          "action_price_denom": {
+            "type": "string",
+            "description": "Action price denomination",
+            "example": "ulume"
+          },
+          "tx_fee": {
+            "type": "string",
+            "description": "Transaction fee amount",
+            "example": "5000"
+          },
+          "tx_fee_denom": {
+            "type": "string",
+            "description": "Transaction fee denomination",
+            "example": "ulume"
+          },
+          "flow_payer": {
+            "type": "string",
+            "description": "Address of the payer in the flow"
+          },
+          "flow_payee": {
+            "type": "string",
+            "description": "Address of the payee in the flow"
+          }
+        },
+        "required": [
+          "tx_type",
+          "tx_hash",
+          "height",
+          "block_time"
+        ]
       },
       "CascadeLEP1": {
         "type": "object",
@@ -1029,7 +1228,7 @@
             "type": "number",
             "format": "float",
             "description": "Availability percentage (0.0-1.0)",
-            "example": 1.0
+            "example": 1
           },
           "rtt_ms": {
             "type": "integer",
@@ -1065,7 +1264,7 @@
             "type": "number",
             "format": "float",
             "description": "Overall availability percentage",
-            "example": 99.0
+            "example": 99
           },
           "avg_rtt_ms": {
             "type": "integer",
@@ -1190,8 +1389,7 @@
         "properties": {
           "supernode_account": {
             "type": "string",
-            "description": "Supernode account address",
-            "example": "lumera1abc..."
+            "description": "Supernode account address"
           },
           "validator_address": {
             "type": "string",
@@ -1300,23 +1498,5 @@
         }
       }
     }
-  },
-  "tags": [
-    {
-      "name": "Health",
-      "description": "Health and readiness endpoints"
-    },
-    {
-      "name": "Actions",
-      "description": "Blockchain action operations"
-    },
-    {
-      "name": "Supernodes",
-      "description": "Supernode metrics and monitoring"
-    },
-    {
-      "name": "Version",
-      "description": "Version and compatibility information"
-    }
-  ]
+  }
 }

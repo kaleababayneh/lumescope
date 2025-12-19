@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -93,7 +94,7 @@ func Bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
 		`ALTER TABLE supernodes ADD COLUMN IF NOT EXISTS "failedProbeCounter" INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE supernodes ADD COLUMN IF NOT EXISTS "lastKnownActualVersion" VARCHAR(255)`,
 		`CREATE TABLE IF NOT EXISTS actions (
-				"actionID"      VARCHAR(64) PRIMARY KEY,
+				"actionID"      BIGINT PRIMARY KEY,
 				"creator"       VARCHAR(255),
 				"actionType"    TEXT,
 				"state"         TEXT,
@@ -114,6 +115,56 @@ func Bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
 			// Migration for existing actions table: add mimeType and size columns if they don't exist
 			`ALTER TABLE actions ADD COLUMN IF NOT EXISTS "mimeType" TEXT`,
 			`ALTER TABLE actions ADD COLUMN IF NOT EXISTS "size" BIGINT NOT NULL DEFAULT 0`,
+		// Migration: Convert actionID from VARCHAR to BIGINT if needed
+		`DO $$ BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name='actions' AND column_name='actionID' AND data_type='character varying'
+			) THEN
+				ALTER TABLE actions ALTER COLUMN "actionID" TYPE BIGINT USING "actionID"::bigint;
+			END IF;
+		END $$`,
+		// Action transactions table for storing transaction lifecycle details (register, finalize, approve)
+		`CREATE TABLE IF NOT EXISTS action_transactions (
+				"actionID"    BIGINT NOT NULL,
+				"txType"      TEXT NOT NULL,
+				"txHash"      TEXT NOT NULL,
+				"height"      BIGINT NOT NULL,
+				"blockTime"   TIMESTAMP NOT NULL,
+				"gasWanted"   BIGINT,
+				"gasUsed"     BIGINT,
+				"actionPrice"      TEXT,
+				"actionPriceDenom" TEXT,
+				"flowPayer"   TEXT,
+				"flowPayee"   TEXT,
+				"txFee"       TEXT,
+				"txFeeDenom"  TEXT,
+				"createdAt"   TIMESTAMP NOT NULL DEFAULT now(),
+				UNIQUE("actionID", "txType")
+			)`,
+		// Migration: Convert action_transactions.actionID from VARCHAR to BIGINT if needed
+		`DO $$ BEGIN
+			IF EXISTS (
+				SELECT 1 FROM information_schema.columns
+				WHERE table_name='action_transactions' AND column_name='actionID' AND data_type='character varying'
+			) THEN
+				ALTER TABLE action_transactions ALTER COLUMN "actionID" TYPE BIGINT USING "actionID"::bigint;
+			END IF;
+		END $$`,
+		`CREATE INDEX IF NOT EXISTS idx_action_transactions_action_id ON action_transactions ("actionID")`,
+		// Migration for existing action_transactions table: rename columns and add new ones
+		`DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='action_transactions' AND column_name='flowAmount') THEN
+				ALTER TABLE action_transactions RENAME COLUMN "flowAmount" TO "actionPrice";
+			END IF;
+		END $$`,
+		`DO $$ BEGIN
+			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='action_transactions' AND column_name='flowDenom') THEN
+				ALTER TABLE action_transactions RENAME COLUMN "flowDenom" TO "actionPriceDenom";
+			END IF;
+		END $$`,
+		`ALTER TABLE action_transactions ADD COLUMN IF NOT EXISTS "txFee" TEXT`,
+		`ALTER TABLE action_transactions ADD COLUMN IF NOT EXISTS "txFeeDenom" TEXT`,
 	}
 	for _, s := range stmts {
 		if _, err := pool.Exec(ctx, s); err != nil {
@@ -603,7 +654,7 @@ type SupernodeMetricsFilter struct {
 }
 
 type ActionDB struct {
-	ActionID       string
+	ActionID       uint64
 	Creator        string
 	ActionType     string
 	State          string
@@ -623,11 +674,12 @@ type ActionsFilter struct {
 	Type       *string
 	Creator    *string
 	State      *string
+	Supernode  *string
 	FromHeight *int64
 	ToHeight   *int64
 	Limit      int
 	CursorTS   *time.Time
-	CursorID   *string
+	CursorID   *uint64
 }
 
 type ProbeTarget struct {
@@ -655,6 +707,25 @@ type SupernodeProbeUpdate struct {
 	IsStatusAPIAvailable bool
 	MetricsReport        any
 	ProbeTimeUTC         time.Time // Used for lastSuccessfulProbe when successful
+}
+
+// ActionTransaction represents a transaction associated with an action's lifecycle
+// (registration, finalization, approval).
+type ActionTransaction struct {
+	ActionID         uint64
+	TxType           string // 'register', 'finalize', 'approve'
+	TxHash           string
+	Height           int64
+	BlockTime        time.Time
+	GasWanted        *int64
+	GasUsed          *int64
+	ActionPrice      *string
+	ActionPriceDenom *string
+	FlowPayer        *string
+	FlowPayee        *string
+	TxFee            *string
+	TxFeeDenom       *string
+	CreatedAt        time.Time
 }
 
 // ListAllActions fetches all actions from the database ordered by block height descending
@@ -728,6 +799,11 @@ func ListActionsFiltered(ctx context.Context, pool *pgxpool.Pool, f ActionsFilte
 		args = append(args, *f.State)
 		argPos++
 	}
+	if f.Supernode != nil {
+		conditions = append(conditions, fmt.Sprintf(`"superNodes" @> jsonb_build_array($%d::text)`, argPos))
+		args = append(args, *f.Supernode)
+		argPos++
+	}
 	if f.FromHeight != nil {
 		conditions = append(conditions, fmt.Sprintf(`"blockHeight" >= $%d`, argPos))
 		args = append(args, *f.FromHeight)
@@ -796,7 +872,7 @@ func ListActionsFiltered(ctx context.Context, pool *pgxpool.Pool, f ActionsFilte
 }
 
 // GetActionByID fetches a single action by ID from the database
-func GetActionByID(ctx context.Context, pool *pgxpool.Pool, actionID string) (ActionDB, error) {
+func GetActionByID(ctx context.Context, pool *pgxpool.Pool, actionID uint64) (ActionDB, error) {
 	query := `SELECT "actionID","creator","actionType","state","blockHeight","priceDenom","priceAmount","expirationTime","metadataRaw","metadataJSON","superNodes","mimeType","size","createdAt"
 		FROM actions
 		WHERE "actionID" = $1`
@@ -1219,4 +1295,315 @@ func GetAggregatedHardwareStats(ctx context.Context, pool *pgxpool.Pool) (*Hardw
 		return nil, err
 	}
 	return &stats, nil
+}
+
+// UpsertActionTransaction inserts or updates an action transaction record.
+// The unique constraint on (actionID, txType) ensures only one transaction per type per action.
+func UpsertActionTransaction(ctx context.Context, pool *pgxpool.Pool, tx *ActionTransaction) error {
+	sql := `INSERT INTO action_transactions (
+		"actionID","txType","txHash","height","blockTime","gasWanted","gasUsed","actionPrice","actionPriceDenom","flowPayer","flowPayee","txFee","txFeeDenom","createdAt"
+	) VALUES (
+		$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,now()
+	) ON CONFLICT ("actionID", "txType") DO UPDATE SET
+		"txHash"=EXCLUDED."txHash",
+		"height"=EXCLUDED."height",
+		"blockTime"=EXCLUDED."blockTime",
+		"gasWanted"=EXCLUDED."gasWanted",
+		"gasUsed"=EXCLUDED."gasUsed",
+		"actionPrice"=EXCLUDED."actionPrice",
+		"actionPriceDenom"=EXCLUDED."actionPriceDenom",
+		"flowPayer"=EXCLUDED."flowPayer",
+		"flowPayee"=EXCLUDED."flowPayee",
+		"txFee"=EXCLUDED."txFee",
+		"txFeeDenom"=EXCLUDED."txFeeDenom"`
+	_, err := pool.Exec(ctx, sql,
+		tx.ActionID, tx.TxType, tx.TxHash, tx.Height, tx.BlockTime,
+		tx.GasWanted, tx.GasUsed,
+		tx.ActionPrice, tx.ActionPriceDenom, tx.FlowPayer, tx.FlowPayee,
+		tx.TxFee, tx.TxFeeDenom,
+	)
+	return err
+}
+
+// GetActionTransactions fetches all transactions for a given action ID.
+// Returns transactions ordered by height ascending.
+func GetActionTransactions(ctx context.Context, pool *pgxpool.Pool, actionID uint64) ([]ActionTransaction, error) {
+	query := `SELECT "actionID","txType","txHash","height","blockTime","gasWanted","gasUsed","actionPrice","actionPriceDenom","flowPayer","flowPayee","txFee","txFeeDenom","createdAt"
+		FROM action_transactions
+		WHERE "actionID" = $1
+		ORDER BY "height" ASC`
+
+	rows, err := pool.Query(ctx, query, actionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var transactions []ActionTransaction
+	for rows.Next() {
+		var t ActionTransaction
+		if err := rows.Scan(
+			&t.ActionID,
+			&t.TxType,
+			&t.TxHash,
+			&t.Height,
+			&t.BlockTime,
+			&t.GasWanted,
+			&t.GasUsed,
+			&t.ActionPrice,
+			&t.ActionPriceDenom,
+			&t.FlowPayer,
+			&t.FlowPayee,
+			&t.TxFee,
+			&t.TxFeeDenom,
+			&t.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		transactions = append(transactions, t)
+	}
+	return transactions, rows.Err()
+}
+
+// Action represents the minimal action data needed for transaction enrichment.
+// It includes fields required to identify transfer flows during parsing.
+type Action struct {
+	ActionID         uint64    // On-chain action identifier (numeric)
+	Creator          string    // Action creator address
+	ActionType       string    // Type of action (e.g., ACTION_TYPE_CASCADE)
+	State            string    // Current state
+	SupernodeAccount string    // First supernode account (for finalize flow parsing)
+	CreatedAt        time.Time // Database creation timestamp
+}
+
+// GetActionsAfterID retrieves actions after the given cursor ID, ordered by actionID.
+// Use lastID=0 to start from the beginning. Returns up to `limit` actions.
+// This is designed for iterating through all actions for background enrichment.
+func GetActionsAfterID(ctx context.Context, pool *pgxpool.Pool, lastID uint64, limit int) ([]Action, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	query := `SELECT
+		"actionID", "creator", "actionType", "state", "superNodes", "createdAt"
+	FROM actions
+	WHERE "actionID" > $1
+	ORDER BY "actionID" ASC
+	LIMIT $2`
+
+	rows, err := pool.Query(ctx, query, lastID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var actions []Action
+	for rows.Next() {
+		var a Action
+		var superNodes any
+		if err := rows.Scan(
+			&a.ActionID,
+			&a.Creator,
+			&a.ActionType,
+			&a.State,
+			&superNodes,
+			&a.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		// Extract first supernode account if available
+		if superNodes != nil {
+			a.SupernodeAccount = extractFirstSupernode(superNodes)
+		}
+
+		actions = append(actions, a)
+	}
+	return actions, rows.Err()
+}
+
+// GetActionsAfterCursor retrieves actions after the given actionID cursor (numeric).
+// Pass 0 to start from the beginning. Returns up to `limit` actions sorted numerically.
+func GetActionsAfterCursor(ctx context.Context, pool *pgxpool.Pool, cursorActionID uint64, limit int) ([]Action, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	// actionID is now BIGINT, no casting needed
+	query := `SELECT
+		"actionID", "creator", "actionType", "state", "superNodes", "createdAt"
+	FROM actions
+	WHERE "actionID" > $1
+	ORDER BY "actionID" ASC
+	LIMIT $2`
+
+	rows, err := pool.Query(ctx, query, cursorActionID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var actions []Action
+	for rows.Next() {
+		var a Action
+		var superNodes any
+		if err := rows.Scan(
+			&a.ActionID,
+			&a.Creator,
+			&a.ActionType,
+			&a.State,
+			&superNodes,
+			&a.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		// Extract first supernode account if available
+		if superNodes != nil {
+			a.SupernodeAccount = extractFirstSupernode(superNodes)
+		}
+
+		actions = append(actions, a)
+	}
+	return actions, rows.Err()
+}
+
+// GetUnenrichedActions retrieves actions that don't have a 'register' transaction yet.
+// This allows the enricher to process only actions needing enrichment instead of all actions.
+// Pass minID=0 to start from the beginning. Returns up to `limit` actions sorted numerically.
+func GetUnenrichedActions(ctx context.Context, pool *pgxpool.Pool, minID uint64, limit int) ([]Action, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	// Select actions where:
+	// 1. actionID >= minID (actionID is now BIGINT)
+	// 2. No entry exists in action_transactions with txType='register' for this action
+	query := `SELECT
+		a."actionID", a."creator", a."actionType", a."state", a."superNodes", a."createdAt"
+	FROM actions a
+	WHERE a."actionID" >= $1
+	  AND NOT EXISTS (
+	    SELECT 1 FROM action_transactions at
+	    WHERE at."actionID" = a."actionID" AND at."txType" = 'register'
+	  )
+	ORDER BY a."actionID" ASC
+	LIMIT $2`
+
+	rows, err := pool.Query(ctx, query, minID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var actions []Action
+	for rows.Next() {
+		var a Action
+		var superNodes any
+		if err := rows.Scan(
+			&a.ActionID,
+			&a.Creator,
+			&a.ActionType,
+			&a.State,
+			&superNodes,
+			&a.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+
+		// Extract first supernode account if available
+		if superNodes != nil {
+			a.SupernodeAccount = extractFirstSupernode(superNodes)
+		}
+
+		actions = append(actions, a)
+	}
+	return actions, rows.Err()
+}
+
+// extractFirstSupernode extracts the first supernode account from a JSONB array.
+func extractFirstSupernode(superNodes any) string {
+	switch v := superNodes.(type) {
+	case []byte:
+		var arr []string
+		if err := json.Unmarshal(v, &arr); err == nil && len(arr) > 0 {
+			return arr[0]
+		}
+	case string:
+		var arr []string
+		if err := json.Unmarshal([]byte(v), &arr); err == nil && len(arr) > 0 {
+			return arr[0]
+		}
+	case []any:
+		if len(v) > 0 {
+			if s, ok := v[0].(string); ok {
+				return s
+			}
+		}
+	case []string:
+		if len(v) > 0 {
+			return v[0]
+		}
+	}
+	return ""
+}
+
+// HasActionTransaction checks if a transaction of the given type already exists for an action.
+func HasActionTransaction(ctx context.Context, pool *pgxpool.Pool, actionID uint64, txType string) (bool, error) {
+	var exists bool
+	err := pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM action_transactions WHERE "actionID" = $1 AND "txType" = $2)`,
+		actionID, txType).Scan(&exists)
+	return exists, err
+}
+
+// GetActionTransactionsByActionIDs fetches transactions for multiple action IDs in a single query.
+// This enables bulk fetching to avoid N+1 queries in list endpoints.
+// Returns a map of actionID -> []ActionTransaction, ordered by height ascending per action.
+func GetActionTransactionsByActionIDs(ctx context.Context, pool *pgxpool.Pool, actionIDs []uint64) (map[uint64][]ActionTransaction, error) {
+	if len(actionIDs) == 0 {
+		return make(map[uint64][]ActionTransaction), nil
+	}
+
+	// Build the query with IN clause
+	var sb strings.Builder
+	sb.WriteString(`SELECT "actionID","txType","txHash","height","blockTime","gasWanted","gasUsed","actionPrice","actionPriceDenom","flowPayer","flowPayee","txFee","txFeeDenom","createdAt"
+		FROM action_transactions
+		WHERE "actionID" = ANY($1)
+		ORDER BY "actionID", "height" ASC`)
+
+	rows, err := pool.Query(ctx, sb.String(), actionIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[uint64][]ActionTransaction)
+	for rows.Next() {
+		var t ActionTransaction
+		if err := rows.Scan(
+			&t.ActionID,
+			&t.TxType,
+			&t.TxHash,
+			&t.Height,
+			&t.BlockTime,
+			&t.GasWanted,
+			&t.GasUsed,
+			&t.ActionPrice,
+			&t.ActionPriceDenom,
+			&t.FlowPayer,
+			&t.FlowPayee,
+			&t.TxFee,
+			&t.TxFeeDenom,
+			&t.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		result[t.ActionID] = append(result[t.ActionID], t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }
