@@ -1,124 +1,99 @@
-# LumeScope (Lumera InfoServer)
+# LumeScope
 
-LumeScope is a read‑only aggregation and indexing service for the Lumera network. It centralizes heavy parsing and high‑fanout reads into one neutral service so client apps stay lightweight and responsive.
+![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
 
-Current status: preview skeleton with working HTTP server, configuration, DB bootstrap, Lumera REST client, and background sync/probing.
+**LumeScope** is a neutral, read-only API aggregator for the Lumera network. It decodes Action metadata (Cascade/Sense), provides Cascade previews (MIME types, file sizes), and aggregates SuperNode metrics, probes, version compatibility, and payment statistics—so Lumera clients stay lightweight and responsive.
 
-## What it does (today)
+## Features
 
-- Stdlib‑only HTTP API server (net/http + ServeMux), no third‑party web frameworks.
-- Health endpoints: `/healthz` (liveness) and `/readyz` (readiness stub).
-- Stubbed v1 endpoints (wired for future DB reads):
-  - `GET /v1/actions` (filters/pagination placeholders, ETag/Last‑Modified support)
-  - `GET /v1/actions/{id}` (joined view placeholder)
-  - `GET /v1/supernodes/metrics` (rollup placeholder)
-  - `GET /v1/version/matrix` (LEP2 compatibility placeholder)
-- Database support (PostgreSQL via pgx). Bootstrap creates the core tables/indexes automatically at startup.
-- Lumera REST client (Cosmos SDK API) for:
-  - Validators list (active/inactive/jailed)
-  - Supernodes list
-  - Actions list (with metadata decoding to JSON using Lumera protobuf types)
-- Background workers:
-  - Periodically fetch validators/supernodes/actions from Lumera and upsert into DB.
-  - Probe supernode ports 4444/4445 and call status API on 8002, then persist metrics.
+- **Actions API** — List and detail endpoints for decoded Action metadata (Cascade/Sense types) with transaction lifecycle tracking (register, finalize, approve)
+- **SuperNode Metrics** — Aggregated hardware stats, version matrix, payment info, and availability probes
+- **Background Scheduler** — Automatic sync loops:
+  - Validators sync (default: 5m)
+  - SuperNodes sync (default: 2m)
+  - Actions sync (default: 30s)
+  - SuperNode port probes (default: 1m)
+  - Action transaction enricher (background)
+- **Embedded PostgreSQL 14** — Single-container deployment; no external database required
+- **Swagger UI** — Interactive API docs at `/docs`
+- **OpenAPI 3.0** — Machine-readable spec at `/openapi.json`
+- **stdlib-only HTTP** — No third-party web frameworks; uses Go's `net/http`
 
-## Prerequisites
+## API Reference
 
-- Go 1.24+
-- PostgreSQL 13+ (tested with 14+)
-- Network access to a Lumera REST (LCD) endpoint (default `http://localhost:1317`)
-- Optional: outbound access to supernodes on ports 4444, 4445, and 8002 for probing
+LumeScope exposes **16 endpoints**. All data is read-only.
 
-## Quick start (TL;DR)
+| Endpoint | Method | Description | Key Params | Example |
+|----------|--------|-------------|------------|---------|
+| `/healthz` | GET | Liveness probe (always 200 if running) | — | `curl http://localhost:18080/healthz` |
+| `/readyz` | GET | Readiness probe | — | `curl http://localhost:18080/readyz` |
+| `/v1/actions` | GET | List actions with decoded metadata | `type`, `creator`, `state`, `supernode`, `fromHeight`, `toHeight`, `limit`, `cursor`, `include_transactions` | `curl 'http://localhost:18080/v1/actions?type=cascade&limit=5'` |
+| `/v1/actions/{id}` | GET | Action details with transactions | — | `curl http://localhost:18080/v1/actions/action123` |
+| `/v1/actions/stats` | GET | Aggregated action statistics | `from`, `to` (RFC3339), `type` | `curl 'http://localhost:18080/v1/actions/stats?type=cascade'` |
+| `/v1/supernodes/metrics` | GET | List supernode metrics | `currentState`, `status`, `version`, `minFailedProbeCounter`, `limit`, `cursor` | `curl 'http://localhost:18080/v1/supernodes/metrics?status=available&limit=10'` |
+| `/v1/supernodes/{id}/metrics` | GET | Single supernode metrics | — | `curl http://localhost:18080/v1/supernodes/lumera1abc.../metrics` |
+| `/v1/supernodes/{id}/paymentInfo` | GET | Payment statistics by denomination | — | `curl http://localhost:18080/v1/supernodes/lumera1abc.../paymentInfo` |
+| `/v1/supernodes/stats` | GET | Aggregated hardware statistics | — | `curl http://localhost:18080/v1/supernodes/stats` |
+| `/v1/supernodes/action-stats` | GET | Action statistics per supernode | — | `curl http://localhost:18080/v1/supernodes/action-stats` |
+| `/v1/supernodes/unavailable` | GET | Supernodes with unavailable status API | `currentState` | `curl http://localhost:18080/v1/supernodes/unavailable` |
+| `/v1/supernodes/sync` | POST | Trigger manual sync+probe (if enabled) | — | `curl -X POST http://localhost:18080/v1/supernodes/sync` |
+| `/v1/version/matrix` | GET | Version compatibility matrix (partial LEP2) | — | `curl http://localhost:18080/v1/version/matrix` |
+| `/openapi.json` | GET | OpenAPI 3.0 specification | — | `curl http://localhost:18080/openapi.json` |
+| `/docs` | GET | Swagger UI documentation | — | Open in browser: `http://localhost:18080/docs` |
+| `/metrics` | GET | Prometheus metrics (**stub**) | — | `curl http://localhost:18080/metrics` |
 
-1) Start PostgreSQL and create a database:
+> **Note:** `/metrics` currently returns stub data. Rate limiting is planned for future releases.
 
-```bash
-  createdb lumescope || true
-  # or via psql:
-  # psql -U postgres -c 'CREATE DATABASE lumescope;'
-```
+See also: [`docs/openapi.json`](docs/openapi.json) and [`docs/context.json`](docs/context.json) for implementation details.
 
-2) Build and run:
+## Quickstart
 
-```bash
-# From repo root
-go build -o bin/lumescope ./cmd/lumescope
-
-# Minimal run with defaults
-./bin/lumescope
-```
-
-3) Verify:
-
-```bash
-curl -i http://localhost:18080/healthz
-curl -i http://localhost:18080/readyz
-curl -s http://localhost:18080/v1/actions | jq .
-```
-
-The server bootstraps DB tables automatically on first start.
-
-## Quick Start (Docker)
-
-LumeScope provides a single-container Docker image that runs both PostgreSQL and the LumeScope application. This is the easiest way to get started.
-
-1) Build the Docker image:
+### 1. Build the Docker image
 
 ```bash
 docker build -t lumescope .
 ```
 
-2) Run the container:
+Build output is ~358 MB.
+
+### 2. Run the container
+
+**Minimal (ephemeral, for testing):**
 
 ```bash
-docker run -d \
-  --name lumescope \
-  -p 18080:18080 \
-  -p 5432:5432 \
-  -e LUMERA_API_BASE=http://your-lumera-node:1317 \
-  lumescope
+docker run -d -p 18080:18080 -e LUMERA_API_BASE=https://lcd.lumera.io --name lumescope lumescope
 ```
 
-3) Verify:
+**With custom environment file:**
 
 ```bash
+cp .env.example .env
+# Edit .env with your settings (see Configuration below)
+
+docker run -d -p 18080:18080 \
+  -v $(pwd)/.env:/app/.env \
+  --name lumescope lumescope
+```
+
+### 3. Verify deployment
+
+```bash
+# Health check
 curl -i http://localhost:18080/healthz
+
+# Readiness check
 curl -i http://localhost:18080/readyz
-curl -s http://localhost:18080/v1/actions | jq .
+
+# Fetch recent actions
+curl -s 'http://localhost:18080/v1/actions?limit=3' | jq .
+
+# Open Swagger UI in browser
+open http://localhost:18080/docs
 ```
 
-**Environment variables:**
-
-You can override any configuration via `-e` flags:
-
-```bash
-docker run -d \
-  --name lumescope \
-  -p 18080:18080 \
-  -e PORT=18080 \
-  -e POSTGRES_DB=lumescope \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres \
-  -e LUMERA_API_BASE=http://your-lumera-node:1317 \
-  -e CORS_ALLOW_ORIGINS="*" \
-  lumescope
-```
-
-**Persisting data:**
-
-To persist PostgreSQL data across container restarts, mount a volume:
-
-```bash
-docker run -d \
-  --name lumescope \
-  -p 18080:18080 \
-  -v lumescope_data:/var/lib/postgresql/data \
-  -e LUMERA_API_BASE=http://your-lumera-node:1317 \
-  lumescope
-```
-
-**Stopping the container:**
+### 4. Stop and remove container
 
 ```bash
 docker stop lumescope
@@ -127,150 +102,282 @@ docker rm lumescope
 
 ## Configuration
 
-Configuration can be provided via environment variables or by creating a `.env` file in the project root. The `.env` file is loaded automatically if present.
+Copy [`.env.example`](.env.example) to `.env` and customize as needed. The container reads environment variables at startup.
 
-To get started, copy the example file:
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `LUMERA_API_BASE` | **Yes** | `http://localhost:1317` | Lumera REST (LCD) endpoint URL |
+| `PORT` | No | `18080` | HTTP server listen port |
+| `CORS_ALLOW_ORIGINS` | No | `*` | Comma-separated CORS origins |
+| `DB_DSN` | No | `postgres://postgres:postgres@localhost:5432/lumescope?sslmode=disable` | PostgreSQL connection string (for external DB) |
+| `DB_MAX_CONNS` | No | `10` | Max database connections |
+| `HTTP_TIMEOUT` | No | `10s` | Outbound HTTP timeout for Lumera calls |
+| `READ_HEADER_TIMEOUT` | No | `5s` | Server read header timeout |
+| `READ_TIMEOUT` | No | `30s` | Server read timeout |
+| `WRITE_TIMEOUT` | No | `30s` | Server write timeout |
+| `IDLE_TIMEOUT` | No | `120s` | Server idle timeout |
+| `REQUEST_TIMEOUT` | No | `10s` | Per-request server timeout |
+| `VALIDATORS_SYNC_INTERVAL` | No | `5m` | Validators sync frequency |
+| `SUPERNODES_SYNC_INTERVAL` | No | `2m` | SuperNodes sync frequency |
+| `ACTIONS_SYNC_INTERVAL` | No | `30s` | Actions sync frequency |
+| `PROBE_INTERVAL` | No | `1m` | SuperNode probe frequency |
+| `DIAL_TIMEOUT` | No | `2s` | TCP dial timeout for probes |
+
+### Embedded PostgreSQL Variables (Docker only)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POSTGRES_DB` | `lumescope` | Database name |
+| `POSTGRES_USER` | `postgres` | Database user |
+| `POSTGRES_PASSWORD` | `postgres` | Database password (set for security) |
+| `PGDATA` | `/var/lib/postgresql/data` | Data directory |
+
+**Recommendation:** Set `POSTGRES_PASSWORD` to a strong value in production:
 
 ```bash
-cp .env.example .env
-# Then edit .env with your settings
+docker run -d -p 18080:18080 \
+  -e LUMERA_API_BASE=https://lcd.lumera.io \
+  -e POSTGRES_PASSWORD=your-secure-password \
+  --name lumescope lumescope
 ```
 
-All settings are shown below with their defaults in parentheses.
+## Production Deployment
 
-- PORT (18080) — HTTP listen port.
-- CORS_ALLOW_ORIGINS (*) — Comma‑separated list of allowed origins for CORS; use `*` to allow all.
+### Persistent Data Volume
 
-- READ_HEADER_TIMEOUT (5s)
-- READ_TIMEOUT (30s)
-- WRITE_TIMEOUT (30s)
-- IDLE_TIMEOUT (120s)
-- REQUEST_TIMEOUT (10s) — Per‑request server‑side timeout.
-
-Database:
-
-- DB_DSN (postgres://postgres:postgres@localhost:5432/lumescope?sslmode=disable)
-- DB_MAX_CONNS (10)
-
-Lumera chain REST (LCD):
-
-- LUMERA_API_BASE (http://localhost:1317)
-- HTTP_TIMEOUT (10s) — Outbound HTTP timeout for Lumera calls.
-
-Background workers:
-
-- VALIDATORS_SYNC_INTERVAL (5m)
-- SUPERNODES_SYNC_INTERVAL (2m)
-- ACTIONS_SYNC_INTERVAL (30s)
-- PROBE_INTERVAL (1m) — Port/status probing cadence for supernodes.
-- DIAL_TIMEOUT (2s) — TCP dial timeout for port probes.
-
-Example full run:
+Mount a volume to retain PostgreSQL data across container restarts:
 
 ```bash
-export PORT=18080
-export DB_DSN="postgres://postgres:postgres@127.0.0.1:5432/lumescope?sslmode=disable"
-export DB_MAX_CONNS=20
-export LUMERA_API_BASE="http://localhost:1317"
-export HTTP_TIMEOUT=10s
-export VALIDATORS_SYNC_INTERVAL=5m
-export SUPERNODES_SYNC_INTERVAL=2m
-export ACTIONS_SYNC_INTERVAL=30s
-export PROBE_INTERVAL=1m
-export DIAL_TIMEOUT=2s
-export CORS_ALLOW_ORIGINS="*"
+docker run -d -p 18080:18080 \
+  -e LUMERA_API_BASE=https://lcd.lumera.io \
+  -e POSTGRES_PASSWORD=your-secure-password \
+  -v lumescope_data:/var/lib/postgresql/data \
+  --name lumescope lumescope
+```
 
+### Using Makefile Targets
+
+The [`Makefile`](Makefile) provides convenience targets:
+
+```bash
+# Mainnet with persistent volume
+make docker-run-mainnet
+
+# Testnet with persistent volume
+make docker-run-testnet
+
+# Ephemeral local development
+make docker-run-local
+```
+
+### External PostgreSQL Database
+
+To use an external PostgreSQL 13+ database instead of the embedded one:
+
+```bash
+docker run -d -p 18080:18080 \
+  -e LUMERA_API_BASE=https://lcd.lumera.io \
+  -e DB_DSN="postgres://user:pass@your-pg-host:5432/lumescope?sslmode=require" \
+  --name lumescope lumescope
+```
+
+The application auto-creates required tables and indexes on startup.
+
+### Running Multiple Replicas
+
+For high availability, run multiple LumeScope containers pointing to a shared external PostgreSQL:
+
+```bash
+# Instance 1
+docker run -d -p 18081:18080 \
+  -e LUMERA_API_BASE=https://lcd.lumera.io \
+  -e DB_DSN="postgres://user:pass@pg-host:5432/lumescope?sslmode=require" \
+  --name lumescope-1 lumescope
+
+# Instance 2
+docker run -d -p 18082:18080 \
+  -e LUMERA_API_BASE=https://lcd.lumera.io \
+  -e DB_DSN="postgres://user:pass@pg-host:5432/lumescope?sslmode=require" \
+  --name lumescope-2 lumescope
+```
+
+Place a load balancer (nginx, HAProxy, cloud LB) in front of the instances.
+
+### Monitoring
+
+- **Health endpoint:** `GET /healthz` (liveness)
+- **Readiness endpoint:** `GET /readyz`
+- **Metrics endpoint:** `GET /metrics` (currently returns stub data; Prometheus integration planned)
+
+The Docker image includes a built-in `HEALTHCHECK` that polls `/healthz` every 30 seconds.
+
+### Future Enhancements
+
+- Full Prometheus metrics export
+- Rate limiting per client
+- Redis caching layer for sub-200ms p95 latency
+
+## Publishing to Public Registry (For Repo Owners)
+
+### Docker Hub
+
+```bash
+# Build with a version tag
+docker build -t username/lumescope:v1.0.0 .
+docker build -t username/lumescope:latest .
+
+# Push to Docker Hub
+docker login
+docker push username/lumescope:v1.0.0
+docker push username/lumescope:latest
+```
+
+### GitHub Container Registry (GHCR)
+
+```bash
+# Login to GHCR
+echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+
+# Tag for GHCR
+docker tag lumescope ghcr.io/org/lumescope:v1.0.0
+docker tag lumescope ghcr.io/org/lumescope:latest
+
+# Push to GHCR
+docker push ghcr.io/org/lumescope:v1.0.0
+docker push ghcr.io/org/lumescope:latest
+```
+
+### Multi-Architecture Builds
+
+For ARM64 and AMD64 support:
+
+```bash
+docker buildx create --use
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t username/lumescope:v1.0.0 \
+  --push .
+```
+
+## Development
+
+### Prerequisites
+
+- Go 1.24+
+- PostgreSQL 13+ (or use Docker)
+
+### Building Locally
+
+```bash
+# Build binary
+make build
+# or: go build -o bin/lumescope ./cmd/lumescope
+
+# Run directly
 ./bin/lumescope
-```
 
-## Build and run
-
-- Build:
-
-```bash
-go build -o bin/lumescope ./cmd/lumescope
-```
-
-- Run:
-
-```bash
-./bin/lumescope
-```
-
-- Or run directly:
-
-```bash
+# Or run without building
 go run ./cmd/lumescope
 ```
 
-## Database notes
+### Makefile Targets
 
-- The application automatically creates required tables and indexes on startup (bootstrap step).
-- If using a non‑default Postgres setup, adjust `DB_DSN` accordingly. Examples:
-  - Local trust auth: `postgres://localhost/lumescope?sslmode=disable`
-  - With password: `postgres://user:pass@localhost:5432/lumescope?sslmode=disable`
-- Ensure the configured user has privileges to create tables/indexes in the database.
+| Target | Description |
+|--------|-------------|
+| `make build` | Build the Go binary to `bin/lumescope` |
+| `make docker-build` | Build the Docker image |
+| `make docker-run` | Run ephemeral container (local dev) |
+| `make docker-run-local` | Alias for `docker-run` |
+| `make docker-run-mainnet` | Run with mainnet LCD + persistent volume |
+| `make docker-run-testnet` | Run with testnet LCD + persistent volume |
+| `make docker-stop` | Stop the lumescope container |
+| `make docker-rm` | Remove the lumescope container |
+| `make docker-rebuild` | Stop, remove, rebuild, and run |
 
-## Endpoints (preview)
+### Project Structure
 
-- `GET /healthz` — liveness (always 200 while process is healthy)
-- `GET /readyz` — readiness (currently returns 200; replace with real checks later)
-- `GET /v1/actions` — list (stubbed data; supports ETag/Last‑Modified headers)
-- `GET /v1/actions/{id}` — details (stubbed data)
-- `GET /v1/supernodes/metrics` — aggregated metrics (stubbed data)
-- `GET /v1/version/matrix` — chain action versions, SN capabilities, compatibility (stubbed data)
-
-Note: Background workers already fetch data into the DB. API handlers are currently placeholders and will be wired to the DB in subsequent work.
-
-## API Documentation
-
-Interactive API documentation is available via Swagger UI:
-
-- `GET /docs` — Swagger UI interface for exploring and testing the API
-- `GET /openapi.json` — OpenAPI 3.0 specification in JSON format
-
-The OpenAPI specification source is maintained in `docs/openapi.yaml` and is duplicated as JSON at `docs/openapi.json`. Both files are kept in sync and document all available endpoints, request parameters, and response schemas.
-
-To access the documentation:
-
-```bash
-# After starting the server, open in your browser:
-open http://localhost:18080/docs
-
-# Or get the raw spec:
-curl http://localhost:18080/openapi.json | jq .
 ```
-
-## Background tasks
-
-The scheduler runs multiple jobs on independent intervals:
-- Validators sync — pulls validators from Lumera LCD and caches monikers.
-- Supernodes sync — pulls supernode list, joins validator info, persists state/history/metrics.
-- Actions sync — pulls actions and decodes the Protobuf metadata (Sense/Cascade) into JSON for storage.
-- Supernode probe — TCP checks ports 4444 and 4445; fetches status JSON from `http://<ip>:8002/api/v1/status`.
-
-Tune intervals with the environment variables listed above.
-
-## CORS and security
-
-- Set `CORS_ALLOW_ORIGINS` to a comma‑separated allowlist of your web origins for browsers. Use `*` for permissive development.
-- This service is read‑only by design. Add a reverse proxy and rate limiting as needed for public exposure.
+├── cmd/lumescope/       # Application entrypoint
+├── internal/
+│   ├── background/      # Scheduler and sync loops
+│   ├── config/          # Environment configuration
+│   ├── db/              # PostgreSQL operations
+│   ├── decoder/         # Protobuf metadata decoder
+│   ├── handlers/        # HTTP route handlers
+│   ├── lumera/          # Lumera LCD client
+│   ├── server/          # HTTP router setup
+│   └── util/            # JSON helpers
+├── docs/
+│   ├── context.json     # Implementation status reference
+│   ├── requirements.json # Project requirements
+│   ├── openapi.json     # OpenAPI 3.0 spec (JSON)
+│   └── openapi.yaml     # OpenAPI 3.0 spec (YAML)
+├── Dockerfile           # Multi-stage build with embedded Postgres
+├── Makefile             # Build and run targets
+└── .env.example         # Environment variable template
+```
 
 ## Troubleshooting
 
-- Cannot connect to Postgres:
-  - Verify `DB_DSN` and that the database exists: `psql <dsn> -c "\dt"`.
-  - Check firewall/network for port 5432.
-- Lumera LCD errors (4xx/5xx):
-  - Confirm `LUMERA_API_BASE` is reachable and points to a valid Lumera REST endpoint.
-- Supernode probe failures:
-  - Ports 4444/4445 may be closed by operators; status API may be unavailable on 8002.
-- CORS errors in browser:
-  - Set `CORS_ALLOW_ORIGINS` appropriately (e.g., `https://your.site`), or `*` during development.
+### LCD endpoint unreachable
 
-## Roadmap (next)
+**Symptom:** Actions/supernodes not syncing; logs show connection errors.
 
-- Wire API handlers to DB queries (replace stubs with real data).
-- Add ETag/Last‑Modified based on DB timestamps.
-- Expose Prometheus metrics (optional, behind build tag or separate binary) without external framework.
-- Helm chart and Docker packaging.
+**Solution:**
+1. Verify `LUMERA_API_BASE` is set correctly:
+   ```bash
+   curl https://lcd.lumera.io/cosmos/base/tendermint/v1beta1/node_info
+   ```
+2. Check network connectivity from the container:
+   ```bash
+   docker exec lumescope wget -qO- https://lcd.lumera.io/healthz
+   ```
+3. If using a local node, ensure the LCD port (1317) is exposed.
+
+### Database connection failures
+
+**Symptom:** Startup fails or queries timeout.
+
+**Solution:**
+1. For embedded Postgres, check container logs:
+   ```bash
+   docker logs lumescope
+   ```
+2. For external Postgres, verify `DB_DSN`:
+   ```bash
+   psql "postgres://user:pass@host:5432/lumescope?sslmode=disable" -c "\dt"
+   ```
+3. Ensure the database user has CREATE TABLE privileges.
+
+### SuperNode probe failures
+
+**Symptom:** Supernodes show as unavailable; probe metrics missing.
+
+**Cause:** SuperNode ports 4444, 4445, or 8002 may be firewalled or the status API is disabled by operators.
+
+**Solution:**
+1. This is expected for some supernodes.
+2. Check `/v1/supernodes/unavailable` to see affected nodes.
+3. The `failedProbeCounter` field tracks consecutive failures.
+
+### CORS errors in browser
+
+**Symptom:** Browser console shows CORS policy errors.
+
+**Solution:**
+Set `CORS_ALLOW_ORIGINS` to your frontend origin:
+```bash
+docker run -d -p 18080:18080 \
+  -e LUMERA_API_BASE=https://lcd.lumera.io \
+  -e CORS_ALLOW_ORIGINS="https://your-app.com" \
+  --name lumescope lumescope
+```
+
+Use `*` only for development.
+
+---
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.

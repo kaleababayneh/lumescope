@@ -1,6 +1,12 @@
 # Stage 1: Builder
 FROM golang:1.25-alpine AS builder
 
+# Install git (required for GOTOOLCHAIN to download newer Go versions)
+RUN apk add --no-cache git
+
+# Enable automatic toolchain downloads for newer Go versions required by go.mod
+ENV GOTOOLCHAIN=auto
+
 WORKDIR /app
 
 # Copy go.mod and go.sum first for better caching
@@ -41,6 +47,10 @@ RUN touch /app/.env
 
 # Expose ports
 EXPOSE 18080 5432
+
+# Health check for container orchestration (uses wget available in Alpine)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD wget -q --spider http://localhost:18080/healthz || exit 1
 
 # Set user and entrypoint
 USER postgres

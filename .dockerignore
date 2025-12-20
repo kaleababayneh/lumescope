@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Binaries (we build fresh in Docker)
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files
+*_test.go
+testdata/
+
+# Documentation (kept separately)
+*.md
+!README.md
+
+# Environment files (secrets)
+.env
+.env.local
+.env.*.local
+
+# Scripts not needed in container
+scripts/
+
+# Misc
+.DS_Store
+Thumbs.db
