@@ -459,3 +459,40 @@ func GetSupernodeActionStats(pool *db.Pool) http.HandlerFunc {
 		util.WriteJSON(w, r, http.StatusOK, response, &now)
 	}
 }
+
+// SupernodePaymentInfoResponse represents payment statistics for a supernode
+type SupernodePaymentInfoResponse struct {
+	Payments      []db.PaymentStat `json:"payments"`
+	SchemaVersion string           `json:"schema_version"`
+}
+
+// GetPaymentInfo returns payment statistics for a specific supernode
+func GetPaymentInfo(pool *db.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := supernodeIDFromPath(r.URL.Path)
+		if id == "" {
+			util.WriteJSONError(w, http.StatusBadRequest, "invalid supernode ID")
+			return
+		}
+
+		// Query payment stats from database
+		stats, err := db.GetSupernodePaymentStats(r.Context(), pool, id)
+		if err != nil {
+			util.WriteJSONError(w, http.StatusInternalServerError, "failed to fetch payment stats")
+			return
+		}
+
+		// If no stats found, return empty array (not an error)
+		if stats == nil {
+			stats = []db.PaymentStat{}
+		}
+
+		response := SupernodePaymentInfoResponse{
+			Payments:      stats,
+			SchemaVersion: "v1.0",
+		}
+
+		now := time.Now().UTC()
+		util.WriteJSON(w, r, http.StatusOK, response, &now)
+	}
+}

@@ -103,7 +103,7 @@ func NewRouter(cfg config.Config, pool *db.Pool, syncTrigger handlers.SyncTrigge
 		handlers.GetSupernodeActionStats(pool)(w, r)
 	})
 
-	// Supernode detail metrics: /v1/supernodes/{id}/metrics
+	// Supernode detail endpoints: /v1/supernodes/{id}/metrics, /v1/supernodes/{id}/paymentInfo
 	mux.HandleFunc("/v1/supernodes/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
@@ -114,7 +114,12 @@ func NewRouter(cfg config.Config, pool *db.Pool, syncTrigger handlers.SyncTrigge
 			handlers.GetSupernodeMetrics(pool)(w, r)
 			return
 		}
-		// If not a metrics request, return 404
+		// Check if path ends with /paymentInfo
+		if strings.HasSuffix(r.URL.Path, "/paymentInfo") {
+			handlers.GetPaymentInfo(pool)(w, r)
+			return
+		}
+		// If not a recognized request, return 404
 		http.NotFound(w, r)
 	})
 

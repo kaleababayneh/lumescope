@@ -638,6 +638,59 @@
         }
       }
     },
+    "/v1/supernodes/{id}/paymentInfo": {
+      "get": {
+        "summary": "Get payment statistics for a supernode",
+        "description": "Retrieve aggregated payment statistics for a specific supernode.\nReturns the sum of actionPrice and txFee for all finalize transactions\nwhere the supernode is the payee (flowPayee), grouped by denomination.\n",
+        "operationId": "getSupernodePaymentInfo",
+        "tags": [
+          "Supernodes"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Supernode account ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response with payment statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupernodePaymentInfoResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid supernode ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/version/matrix": {
       "get": {
         "summary": "Get version compatibility matrix",
@@ -767,6 +820,54 @@
           "states",
           "supernode_address",
           "schema_version"
+        ]
+      },
+      "SupernodePaymentInfoResponse": {
+        "type": "object",
+        "description": "Payment statistics for a supernode",
+        "properties": {
+          "payments": {
+            "type": "array",
+            "description": "List of payment statistics grouped by denomination",
+            "items": {
+              "$ref": "#/components/schemas/PaymentStat"
+            }
+          },
+          "schema_version": {
+            "type": "string",
+            "description": "API schema version",
+            "example": "v1.0"
+          }
+        },
+        "required": [
+          "payments",
+          "schema_version"
+        ]
+      },
+      "PaymentStat": {
+        "type": "object",
+        "description": "Aggregated payment statistics for a specific denomination",
+        "properties": {
+          "denom": {
+            "type": "string",
+            "description": "The denomination of the payment",
+            "example": "ulume"
+          },
+          "total_action_price": {
+            "type": "string",
+            "description": "Total sum of action prices (as string to preserve precision)",
+            "example": "1000000"
+          },
+          "total_tx_fee": {
+            "type": "string",
+            "description": "Total sum of transaction fees (as string to preserve precision)",
+            "example": "50000"
+          }
+        },
+        "required": [
+          "denom",
+          "total_action_price",
+          "total_tx_fee"
         ]
       },
       "SupernodeStatsResponse": {

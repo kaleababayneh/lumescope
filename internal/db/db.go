@@ -1607,3 +1607,46 @@ func GetActionTransactionsByActionIDs(ctx context.Context, pool *pgxpool.Pool, a
 
 	return result, nil
 }
+
+// PaymentStat represents aggregated payment statistics for a supernode by denomination.
+type PaymentStat struct {
+	Denom            string `json:"denom"`
+	TotalActionPrice string `json:"total_action_price"`
+	TotalTxFee       string `json:"total_tx_fee"`
+}
+
+// GetSupernodePaymentStats returns aggregated payment statistics for a supernode.
+// It sums actionPrice and txFee for all finalize transactions where the supernode is the payee.
+// Results are grouped by denomination (actionPriceDenom).
+func GetSupernodePaymentStats(ctx context.Context, pool *pgxpool.Pool, supernodeAccount string) ([]PaymentStat, error) {
+	query := `
+		SELECT
+			COALESCE("actionPriceDenom", '') as denom,
+			COALESCE(SUM("actionPrice"::numeric), 0)::text as total_price,
+			COALESCE(SUM("txFee"::numeric), 0)::text as total_fee
+		FROM action_transactions
+		WHERE "txType" = 'finalize' AND "flowPayee" = $1
+		GROUP BY "actionPriceDenom"
+	`
+
+	rows, err := pool.Query(ctx, query, supernodeAccount)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var stats []PaymentStat
+	for rows.Next() {
+		var s PaymentStat
+		if err := rows.Scan(&s.Denom, &s.TotalActionPrice, &s.TotalTxFee); err != nil {
+			return nil, err
+		}
+		stats = append(stats, s)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return stats, nil
+}
