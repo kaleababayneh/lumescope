@@ -1168,7 +1168,7 @@ func GetActionStats(ctx context.Context, pool *pgxpool.Pool, actionType string) 
 }
 
 // GetActionStatsExtended returns aggregated action statistics with MIME type breakdown.
-// It supports optional time filtering via from/to timestamps on createdAt column.
+// It supports optional time filtering via from/to timestamps on the register transaction's blockTime.
 // If actionType is provided (non-empty), it filters by that action type.
 func GetActionStatsExtended(ctx context.Context, pool *pgxpool.Pool, filter ActionStatsFilter) (*ActionStatsExtended, error) {
 	// Build WHERE conditions
@@ -1176,22 +1176,34 @@ func GetActionStatsExtended(ctx context.Context, pool *pgxpool.Pool, filter Acti
 	var args []any
 	argPos := 1
 
+	// Determine if we need to join with action_transactions (for date filtering)
+	needsJoin := filter.From != nil || filter.To != nil
+
 	if filter.ActionType != nil && *filter.ActionType != "" {
-		conditions = append(conditions, fmt.Sprintf(`"actionType" = $%d`, argPos))
+		conditions = append(conditions, fmt.Sprintf(`a."actionType" = $%d`, argPos))
 		args = append(args, *filter.ActionType)
 		argPos++
 	}
 
 	if filter.From != nil {
-		conditions = append(conditions, fmt.Sprintf(`"createdAt" >= $%d`, argPos))
+		conditions = append(conditions, fmt.Sprintf(`at."blockTime" >= $%d`, argPos))
 		args = append(args, *filter.From)
 		argPos++
 	}
 
 	if filter.To != nil {
-		conditions = append(conditions, fmt.Sprintf(`"createdAt" <= $%d`, argPos))
+		conditions = append(conditions, fmt.Sprintf(`at."blockTime" <= $%d`, argPos))
 		args = append(args, *filter.To)
 		argPos++
+	}
+
+	// Build FROM clause with optional JOIN
+	var fromClause string
+	if needsJoin {
+		fromClause = `FROM actions a
+			INNER JOIN action_transactions at ON a."actionID" = at."actionID" AND at."txType" = 'register'`
+	} else {
+		fromClause = `FROM actions a`
 	}
 
 	whereClause := ""
@@ -1200,7 +1212,7 @@ func GetActionStatsExtended(ctx context.Context, pool *pgxpool.Pool, filter Acti
 	}
 
 	// Query 1: Get state counts
-	stateQuery := `SELECT "state", COUNT(*) as count FROM actions` + whereClause + ` GROUP BY "state"`
+	stateQuery := `SELECT a."state", COUNT(*) as count ` + fromClause + whereClause + ` GROUP BY a."state"`
 	stateRows, err := pool.Query(ctx, stateQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query state counts: %w", err)
@@ -1224,7 +1236,7 @@ func GetActionStatsExtended(ctx context.Context, pool *pgxpool.Pool, filter Acti
 	}
 
 	// Query 2: Get MIME type statistics
-	mimeQuery := `SELECT COALESCE("mimeType", '') as mime_type, COUNT(*) as count, COALESCE(AVG("size"), 0) as avg_size FROM actions` + whereClause + ` GROUP BY "mimeType"`
+	mimeQuery := `SELECT COALESCE(a."mimeType", '') as mime_type, COUNT(*) as count, COALESCE(AVG(a."size"), 0) as avg_size ` + fromClause + whereClause + ` GROUP BY a."mimeType"`
 	mimeRows, err := pool.Query(ctx, mimeQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query mime stats: %w", err)

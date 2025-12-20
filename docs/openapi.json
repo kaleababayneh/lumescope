@@ -241,7 +241,7 @@
     "/v1/actions/stats": {
       "get": {
         "summary": "Get global action statistics",
-        "description": "Retrieve aggregated action statistics for all actions (global).\nReturns total count, a breakdown by state (PENDING, DONE, APPROVED, EXPIRED),\nand MIME type statistics with count and average file size.\nSupports optional time filtering via `from` and `to` parameters.\n",
+        "description": "Retrieve aggregated action statistics for all actions (global).\nReturns total count, a breakdown by state (PENDING, DONE, APPROVED, EXPIRED),\nand MIME type statistics with count and average file size.\nSupports optional time filtering via `from` and `to` parameters based on the\nregister transaction's blockTime (the time the action was registered on-chain).\n",
         "operationId": "getActionStats",
         "tags": [
           "Actions"
@@ -263,7 +263,7 @@
           {
             "name": "from",
             "in": "query",
-            "description": "Filter actions created at or after this timestamp (RFC3339 format)",
+            "description": "Filter actions registered at or after this timestamp based on register transaction blockTime (RFC3339 format)",
             "schema": {
               "type": "string",
               "format": "date-time"
@@ -273,7 +273,7 @@
           {
             "name": "to",
             "in": "query",
-            "description": "Filter actions created at or before this timestamp (RFC3339 format)",
+            "description": "Filter actions registered at or before this timestamp based on register transaction blockTime (RFC3339 format)",
             "schema": {
               "type": "string",
               "format": "date-time"

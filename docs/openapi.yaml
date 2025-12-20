@@ -159,7 +159,8 @@ paths:
         Retrieve aggregated action statistics for all actions (global).
         Returns total count, a breakdown by state (PENDING, DONE, APPROVED, EXPIRED),
         and MIME type statistics with count and average file size.
-        Supports optional time filtering via `from` and `to` parameters.
+        Supports optional time filtering via `from` and `to` parameters based on the
+        register transaction's blockTime (the time the action was registered on-chain).
       operationId: getActionStats
       tags:
         - Actions
@@ -175,14 +176,14 @@ paths:
               - ACTION_TYPE_SENSE
         - name: from
           in: query
-          description: Filter actions created at or after this timestamp (RFC3339 format)
+          description: Filter actions registered at or after this timestamp based on register transaction blockTime (RFC3339 format)
           schema:
             type: string
             format: date-time
           example: "2024-01-01T00:00:00Z"
         - name: to
           in: query
-          description: Filter actions created at or before this timestamp (RFC3339 format)
+          description: Filter actions registered at or before this timestamp based on register transaction blockTime (RFC3339 format)
           schema:
             type: string
             format: date-time

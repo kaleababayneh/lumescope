@@ -28,7 +28,7 @@
         "path": "/v1/actions/stats",
         "status": "implemented",
         "evidence": ["internal/handlers/actions.go:261-330", "internal/server/router.go:47-53"],
-        "notes": "Handler connected to database via db.GetActionStatsExtended. Returns aggregated action statistics with MIME type breakdown, average size per type, and state counts. Supports time filtering via from/to query params (RFC3339 format) on createdAt column."
+        "notes": "Handler connected to database via db.GetActionStatsExtended. Returns aggregated action statistics with MIME type breakdown, average size per type, and state counts. Supports time filtering via from/to query params (RFC3339 format) on register transaction blockTime (joins action_transactions where txType='register')."
       },
       {
         "path": "/v1/supernodes/metrics",
@@ -202,7 +202,7 @@
         {
           "name": "GetActionStatsExtended",
           "evidence": ["internal/db/db.go:1093-1180"],
-          "notes": "Returns aggregated action statistics for /v1/actions/stats endpoint. Supports time filtering via from/to timestamps on createdAt column. Returns state counts and MIME type statistics with count and average size per type."
+          "notes": "Returns aggregated action statistics for /v1/actions/stats endpoint. Supports time filtering via from/to timestamps on register transaction blockTime (joins action_transactions where txType='register'). Returns state counts and MIME type statistics with count and average size per type."
         },
         {
           "name": "GetAggregatedHardwareStats",
@@ -271,9 +271,9 @@
     },
     "GET /v1/actions/stats": {
       "status": "implemented",
-      "notes": "Endpoint connected to database via db.GetActionStatsExtended. Returns aggregated action statistics with MIME type breakdown and average size. Supports time filtering via from/to query params (RFC3339 format) on createdAt column.",
+      "notes": "Endpoint connected to database via db.GetActionStatsExtended. Returns aggregated action statistics with MIME type breakdown and average size. Supports time filtering via from/to query params (RFC3339 format) on register transaction blockTime (joins action_transactions where txType='register').",
       "evidence": ["internal/handlers/actions.go:261-330", "internal/db/db.go:1093-1180"],
-      "implemented": ["State counts", "Total count", "MIME type statistics (count and avg_size per type)", "Time filtering via from/to params on createdAt"]
+      "implemented": ["State counts", "Total count", "MIME type statistics (count and avg_size per type)", "Time filtering via from/to params on register transaction blockTime"]
     },
     "GET /v1/supernodes/metrics": {
       "status": "implemented",
