@@ -223,41 +223,99 @@ The Docker image includes a built-in `HEALTHCHECK` that polls `/healthz` every 3
 
 ### Docker Hub
 
+Assumes you have already built a local `lumescope` image (see [Quickstart](#quickstart)).
+
 ```bash
-# Build with a version tag
-docker build -t username/lumescope:v1.0.0 .
-docker build -t username/lumescope:latest .
+# Login to Docker Hub
+docker login
+
+# Tag the local image
+docker tag lumescope yourusername/lumescope:v1.0.0
 
 # Push to Docker Hub
-docker login
-docker push username/lumescope:v1.0.0
-docker push username/lumescope:latest
+docker push yourusername/lumescope:v1.0.0
+
+# (Optional) Also push a :latest tag
+docker tag lumescope yourusername/lumescope:latest
+docker push yourusername/lumescope:latest
 ```
 
 ### GitHub Container Registry (GHCR)
 
-```bash
-# Login to GHCR
-echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+GHCR requires a **classic Personal Access Token (PAT)** with the correct scopes. If you see `denied: permission_denied: The token provided does not match expected scopes`, your token is missing required permissions.
 
-# Tag for GHCR
-docker tag lumescope ghcr.io/org/lumescope:v1.0.0
-docker tag lumescope ghcr.io/org/lumescope:latest
+**1. Create a classic PAT:**
+
+1. Go to [github.com/settings/tokens](https://github.com/settings/tokens) → **Generate new token (classic)**.
+2. Select scopes:
+   - `repo` (full control) — required if the package repository is private.
+   - `read:packages` — pull images.
+   - `write:packages` — push images.
+3. Copy the token; you won't see it again.
+
+**2. (Org only) Ensure package write permissions:**
+
+If publishing under an **organization**, your user must have write access to packages:
+
+1. Navigate to **Organization → Settings → Packages**.
+2. Under *Package creation*, ensure members can publish packages.
+3. Verify you are a member with appropriate role (e.g., *Maintainer* or *Admin*).
+
+**3. Authenticate and push:**
+
+```bash
+# Set environment variables (or substitute directly)
+export GITHUB_PAT=ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+export GITHUB_USERNAME=yourusername
+
+# Login to GHCR
+echo $GITHUB_PAT | docker login ghcr.io -u $GITHUB_USERNAME --password-stdin
+
+# Tag the local image (replace {owner} with your username or org)
+docker tag lumescope ghcr.io/{owner}/lumescope:v1.0.0
 
 # Push to GHCR
-docker push ghcr.io/org/lumescope:v1.0.0
-docker push ghcr.io/org/lumescope:latest
+docker push ghcr.io/{owner}/lumescope:v1.0.0
+
+# (Optional) Also push a :latest tag
+docker tag lumescope ghcr.io/{owner}/lumescope:latest
+docker push ghcr.io/{owner}/lumescope:latest
 ```
 
 ### Multi-Architecture Builds
 
-For ARM64 and AMD64 support:
+For ARM64 and AMD64 support using `docker buildx`:
 
 ```bash
 docker buildx create --use
+
+# Docker Hub
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t username/lumescope:v1.0.0 \
+  -t yourusername/lumescope:v1.0.0 \
   --push .
+
+# GHCR
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/{owner}/lumescope:v1.0.0 \
+  --push .
+```
+
+### Credential Helper (Avoid Unencrypted Warnings)
+
+If Docker warns about storing credentials unencrypted, configure a credential helper:
+
+```bash
+# Example: use the native OS keychain (macOS/Windows) or pass (Linux)
+# See: https://docs.docker.com/engine/reference/commandline/login/#credential-helpers
+docker-credential-helper  # varies by OS
+```
+
+On Linux, install `pass` and `docker-credential-pass`, then configure `~/.docker/config.json`:
+
+```json
+{
+  "credsStore": "pass"
+}
 ```
 
 ## Development
