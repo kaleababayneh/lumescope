@@ -814,10 +814,11 @@ func ListActionsFiltered(ctx context.Context, pool *pgxpool.Pool, f ActionsFilte
 		args = append(args, *f.ToHeight)
 		argPos++
 	}
-	if f.CursorTS != nil && f.CursorID != nil {
-		conditions = append(conditions, fmt.Sprintf(`("createdAt" < $%d OR ("createdAt" = $%d AND "actionID" < $%d))`, argPos, argPos, argPos+1))
-		args = append(args, *f.CursorTS, *f.CursorID)
-		argPos += 2
+	if f.CursorID != nil {
+		// Cast actionID to BIGINT for proper numerical comparison (handles legacy TEXT columns)
+		conditions = append(conditions, fmt.Sprintf(`"actionID"::BIGINT < $%d`, argPos))
+		args = append(args, *f.CursorID)
+		argPos++
 	}
 
 	if len(conditions) > 0 {
@@ -825,7 +826,8 @@ func ListActionsFiltered(ctx context.Context, pool *pgxpool.Pool, f ActionsFilte
 		sb.WriteString(strings.Join(conditions, " AND "))
 	}
 
-	sb.WriteString(` ORDER BY "createdAt" DESC, "actionID" DESC`)
+	// Sort strictly by actionID DESC for deterministic ordering (actionID is unique and monotonic)
+	sb.WriteString(` ORDER BY "actionID"::BIGINT DESC`)
 	sb.WriteString(fmt.Sprintf(" LIMIT $%d", argPos))
 	args = append(args, limit+1)
 

@@ -274,6 +274,7 @@ type Action struct {
 	State          string     `json:"state"`
 	BlockHeight    string     `json:"blockHeight"`
 	SuperNodes     []string   `json:"superNodes"`
+	FileSizeKbs    string     `json:"fileSizeKbs"` // File size in KB from Lumera API
 }
 
 func (c *Client) GetActions(ctx context.Context, actionType, actionState, nextKey string, limit int) (as []Action, newNextKey string, err error) {

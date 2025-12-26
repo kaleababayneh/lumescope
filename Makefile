@@ -21,14 +21,14 @@ docker-run-local: docker-run
 docker-run-mainnet:
 	docker run -d -p 18080:18080 --name lumescope \
 		-e LUMERA_API_BASE=https://lcd.lumera.io \
-		-v lumescope_data:/var/lib/postgresql/data \
+		-v lumescope_data_mainnet:/var/lib/postgresql/data \
 		lumescope
 
 # Run the Docker container for Testnet (with persistent volume)
 docker-run-testnet:
 	docker run -d -p 18080:18080 --name lumescope \
 		-e LUMERA_API_BASE=https://lcd.testnet.lumera.io \
-		-v lumescope_data:/var/lib/postgresql/data \
+		-v lumescope_data_testnet:/var/lib/postgresql/data \
 		lumescope
 
 # Stop the Docker container (ignore error if not running)

@@ -352,7 +352,6 @@ func (r *Runner) syncActions(ctx context.Context) error {
 			}
 
 			// Extract mimeType from file_name extension in metadataJSON (for Cascade actions)
-			// Size is not available in metadata, default to 0
 			mimeType := extractMimeType(decoded)
 
 			// Parse ActionID from string (API response) to uint64 (DB model)
@@ -360,6 +359,14 @@ func (r *Runner) syncActions(ctx context.Context) error {
 			if err != nil {
 				log.Printf("parse action ID %s: %v", a.ActionID, err)
 				continue
+			}
+
+			// Parse FileSizeKbs from API response and convert to bytes
+			var sizeBytes int64
+			if a.FileSizeKbs != "" {
+				if kbs, err := strconv.ParseInt(a.FileSizeKbs, 10, 64); err == nil {
+					sizeBytes = kbs * 1024 // Convert KB to bytes
+				}
 			}
 
 			rec := db.ActionDB{
@@ -375,7 +382,7 @@ func (r *Runner) syncActions(ctx context.Context) error {
 				MetadataJSON:   toJSONB(decoded),
 				SuperNodes:     toJSONB(superNodes),
 				MimeType:       mimeType,
-				Size:           0, // Size not available in metadata
+				Size:           sizeBytes, // File size in bytes from API's fileSizeKbs
 			}
 			if err := db.UpsertAction(ctx, r.DB, rec); err != nil {
 				log.Printf("upsert action %d: %v", actionID, err)
