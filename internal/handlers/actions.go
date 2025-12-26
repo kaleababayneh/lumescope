@@ -361,7 +361,6 @@ func GetAction(pool *db.Pool) http.HandlerFunc {
 			MimeType       string           `json:"mime_type,omitempty"`
 			Size           int64            `json:"size"`
 			Price          Price            `json:"price"`
-			Timestamp      time.Time        `json:"timestamp"`
 			Decoded        interface{}      `json:"decoded,omitempty"`
 			Raw            string           `json:"raw,omitempty"`
 			SuperNodes     interface{}      `json:"super_nodes,omitempty"`
@@ -385,7 +384,6 @@ func GetAction(pool *db.Pool) http.HandlerFunc {
 				Denom:  action.PriceDenom,
 				Amount: action.PriceAmount,
 			},
-			Timestamp:      time.Unix(action.BlockHeight, 0).UTC(),
 			RegisterTxID:   registerTxID,
 			RegisterTxTime: registerTxTime,
 			FinalizeTxID:   finalizeTxID,
