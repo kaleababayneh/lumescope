@@ -505,6 +505,8 @@ func (r *Runner) probeSupernodes(ctx context.Context) error {
 			HardwareSummary:      ptrStr(status.HardwareSummary),
 			PeersCount:           ptrI32(status.PeersCount),
 			Rank:                 ptrI32(status.Rank),
+			P2PDbSizeMb:          ptrF64(status.P2PDbSizeMb),
+			P2PRecords:           ptrI64(status.P2PRecords),
 			LastStatusCheck:      &now,
 			IsStatusAPIAvailable: status.Available,
 			ProbeTimeUTC:         now,
@@ -715,8 +717,14 @@ type statusResponse struct {
 	Network            struct {
 		PeersCount int `json:"peers_count"`
 	} `json:"network"`
-	Rank      int    `json:"rank"`
-	IPAddress string `json:"ip_address"`
+	Rank       int    `json:"rank"`
+	IPAddress  string `json:"ip_address"`
+	P2PMetrics struct {
+		Database struct {
+			P2PDbSizeMb       float64 `json:"p2p_db_size_mb"`
+			P2PDbRecordsCount string  `json:"p2p_db_records_count"`
+		} `json:"database"`
+	} `json:"p2p_metrics"`
 }
 
 type statusSummary struct {
@@ -734,6 +742,8 @@ type statusSummary struct {
 	HardwareSummary     string
 	PeersCount          int32
 	Rank                int32
+	P2PDbSizeMb         float64
+	P2PRecords          int64
 }
 
 func fetchStatus(ctx context.Context, host string) statusSummary {
@@ -755,7 +765,13 @@ func fetchStatus(ctx context.Context, host string) statusSummary {
 	if err := json.NewDecoder(resp.Body).Decode(&sr); err != nil {
 		return statusSummary{Available: false}
 	}
-	ss := statusSummary{Available: true, Version: sr.Version, CPUUsagePercent: sr.Resources.CPU.UsagePercent, CPUCores: int32(sr.Resources.CPU.Cores), MemoryTotalGb: sr.Resources.Memory.TotalGb, MemoryUsedGb: sr.Resources.Memory.UsedGb, MemoryUsagePercent: sr.Resources.Memory.UsagePercent, HardwareSummary: sr.Resources.HardwareSummary, PeersCount: int32(sr.Network.PeersCount), Rank: int32(sr.Rank)}
+	ss := statusSummary{Available: true, Version: sr.Version, CPUUsagePercent: sr.Resources.CPU.UsagePercent, CPUCores: int32(sr.Resources.CPU.Cores), MemoryTotalGb: sr.Resources.Memory.TotalGb, MemoryUsedGb: sr.Resources.Memory.UsedGb, MemoryUsagePercent: sr.Resources.Memory.UsagePercent, HardwareSummary: sr.Resources.HardwareSummary, PeersCount: int32(sr.Network.PeersCount), Rank: int32(sr.Rank), P2PDbSizeMb: sr.P2PMetrics.Database.P2PDbSizeMb}
+	// Parse p2p_db_records_count from string to int64
+	if sr.P2PMetrics.Database.P2PDbRecordsCount != "" {
+		if v, err := strconv.ParseInt(sr.P2PMetrics.Database.P2PDbRecordsCount, 10, 64); err == nil {
+			ss.P2PRecords = v
+		}
+	}
 	if sr.UptimeSecondsStr != "" {
 		if v, err := strconv.ParseInt(sr.UptimeSecondsStr, 10, 64); err == nil {
 			ss.UptimeSeconds = v

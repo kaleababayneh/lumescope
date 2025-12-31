@@ -35,6 +35,8 @@ type SingleSupernodeMetricsResponse struct {
 	PeersCount             *int32                 `json:"peers_count,omitempty"`
 	UptimeSeconds          *int64                 `json:"uptime_seconds,omitempty"`
 	Rank                   *int32                 `json:"rank,omitempty"`
+	P2PDbSizeMb            *float64               `json:"p2p_db_size_mb,omitempty"`
+	P2PRecords             *int64                 `json:"p2p_records,omitempty"`
 	LastStatusCheck        *time.Time             `json:"last_status_check,omitempty"`
 	IsStatusAPIAvailable   bool                   `json:"is_status_api_available"`
 	MetricsReport          map[string]interface{} `json:"metrics_report,omitempty"`
@@ -196,6 +198,8 @@ func ListSupernodesMetrics(pool *db.Pool) http.HandlerFunc {
 				PeersCount:             sn.PeersCount,
 				UptimeSeconds:          sn.UptimeSeconds,
 				Rank:                   sn.Rank,
+				P2PDbSizeMb:            sn.P2PDbSizeMb,
+				P2PRecords:             sn.P2PRecords,
 				LastStatusCheck:        sn.LastStatusCheck,
 				IsStatusAPIAvailable:   sn.IsStatusAPIAvailable,
 				LastSuccessfulProbe:    sn.LastSuccessfulProbe,
@@ -327,6 +331,8 @@ func GetSupernodeMetrics(pool *db.Pool) http.HandlerFunc {
 			PeersCount:             sn.PeersCount,
 			UptimeSeconds:          sn.UptimeSeconds,
 			Rank:                   sn.Rank,
+			P2PDbSizeMb:            sn.P2PDbSizeMb,
+			P2PRecords:             sn.P2PRecords,
 			LastStatusCheck:        sn.LastStatusCheck,
 			IsStatusAPIAvailable:   sn.IsStatusAPIAvailable,
 			LastSuccessfulProbe:    sn.LastSuccessfulProbe,
@@ -374,6 +380,8 @@ type SupernodeStatsResponse struct {
 	AvailableStorageBytes    int64   `json:"available_storage_bytes"`
 	StorageUsedPercent       float64 `json:"storage_used_percent"`
 	StorageAvailablePercent  float64 `json:"storage_available_percent"`
+	TotalP2PDbSizeMb         float64 `json:"total_p2p_db_size_mb"`
+	TotalP2PRecords          int64   `json:"total_p2p_records"`
 	AvailableSupernodes      int64   `json:"available_supernodes"`
 	SchemaVersion            string  `json:"schema_version"`
 }
@@ -411,6 +419,8 @@ func GetSupernodeStats(pool *db.Pool) http.HandlerFunc {
 			AvailableStorageBytes:   availableStorageBytes,
 			StorageUsedPercent:      storageUsedPercent,
 			StorageAvailablePercent: storageAvailablePercent,
+			TotalP2PDbSizeMb:        stats.TotalP2PDbSizeMb,
+			TotalP2PRecords:         stats.TotalP2PRecords,
 			AvailableSupernodes:     stats.AvailableSupernodes,
 			SchemaVersion:           "v1.0",
 		}

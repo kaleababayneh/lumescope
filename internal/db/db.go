@@ -83,6 +83,8 @@ func Bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
 			"lastSuccessfulProbe"  TIMESTAMP,
 			"failedProbeCounter"   INTEGER NOT NULL DEFAULT 0,
 			"lastKnownActualVersion" VARCHAR(255),
+			"p2pDbSizeMb"          DOUBLE PRECISION,
+			"p2pRecords"           BIGINT,
 			"createdAt"            TIMESTAMP NOT NULL DEFAULT now(),
 			"updatedAt"            TIMESTAMP NOT NULL DEFAULT now()
 		)`,
@@ -93,6 +95,9 @@ func Bootstrap(ctx context.Context, pool *pgxpool.Pool) error {
 		`ALTER TABLE supernodes ADD COLUMN IF NOT EXISTS "lastSuccessfulProbe" TIMESTAMP`,
 		`ALTER TABLE supernodes ADD COLUMN IF NOT EXISTS "failedProbeCounter" INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE supernodes ADD COLUMN IF NOT EXISTS "lastKnownActualVersion" VARCHAR(255)`,
+		// Migration for P2P database metrics columns
+		`ALTER TABLE supernodes ADD COLUMN IF NOT EXISTS "p2pDbSizeMb" DOUBLE PRECISION`,
+		`ALTER TABLE supernodes ADD COLUMN IF NOT EXISTS "p2pRecords" BIGINT`,
 		`CREATE TABLE IF NOT EXISTS actions (
 				"actionID"      BIGINT PRIMARY KEY,
 				"creator"       VARCHAR(255),
@@ -224,10 +229,12 @@ func UpdateSupernodeProbeData(ctx context.Context, pool *pgxpool.Pool, sn Supern
 			"peersCount"=$12,
 			"uptimeSeconds"=$13,
 			rank=$14,
-			"lastStatusCheck"=$15,
-			"isStatusApiAvailable"=$16,
-			"metricsReport"=$17::jsonb,
-			"lastSuccessfulProbe"=$18,
+			"p2pDbSizeMb"=$15,
+			"p2pRecords"=$16,
+			"lastStatusCheck"=$17,
+			"isStatusApiAvailable"=$18,
+			"metricsReport"=$19::jsonb,
+			"lastSuccessfulProbe"=$20,
 			"failedProbeCounter"=0,
 			"lastKnownActualVersion"=COALESCE(NULLIF($2,''),"lastKnownActualVersion"),
 			"updatedAt"=now()
@@ -247,6 +254,8 @@ func UpdateSupernodeProbeData(ctx context.Context, pool *pgxpool.Pool, sn Supern
 			sn.PeersCount,
 			sn.UptimeSeconds,
 			sn.Rank,
+			sn.P2PDbSizeMb,
+			sn.P2PRecords,
 			sn.LastStatusCheck,
 			sn.IsStatusAPIAvailable,
 			sn.MetricsReport,
@@ -268,9 +277,11 @@ func UpdateSupernodeProbeData(ctx context.Context, pool *pgxpool.Pool, sn Supern
 			"peersCount"=$12,
 			"uptimeSeconds"=$13,
 			rank=$14,
-			"lastStatusCheck"=$15,
-			"isStatusApiAvailable"=$16,
-			"metricsReport"=$17::jsonb,
+			"p2pDbSizeMb"=$15,
+			"p2pRecords"=$16,
+			"lastStatusCheck"=$17,
+			"isStatusApiAvailable"=$18,
+			"metricsReport"=$19::jsonb,
 			"failedProbeCounter"=COALESCE("failedProbeCounter",0)+1,
 			"updatedAt"=now()
 		WHERE "supernodeAccount"=$1`
@@ -289,6 +300,8 @@ func UpdateSupernodeProbeData(ctx context.Context, pool *pgxpool.Pool, sn Supern
 			sn.PeersCount,
 			sn.UptimeSeconds,
 			sn.Rank,
+			sn.P2PDbSizeMb,
+			sn.P2PRecords,
 			sn.LastStatusCheck,
 			sn.IsStatusAPIAvailable,
 			sn.MetricsReport,
@@ -411,7 +424,7 @@ func listSupernodeMetricsFiltered(ctx context.Context, pool *pgxpool.Pool, f Sup
 		argPos     = 1
 	)
 
-	sb.WriteString(`SELECT "supernodeAccount","validatorAddress","validatorMoniker","currentState","currentStateHeight","ipAddress","p2pPort","protocolVersion","actualVersion","cpuUsagePercent","cpuCores","memoryTotalGb","memoryUsedGb","memoryUsagePercent","storageTotalBytes","storageUsedBytes","storageUsagePercent","hardwareSummary","peersCount","uptimeSeconds",rank,"registeredServices","runningTasks","stateHistory",evidence,"prevIpAddresses","lastStatusCheck","isStatusApiAvailable","metricsReport","lastSuccessfulProbe","failedProbeCounter",COALESCE("lastKnownActualVersion",'')
+	sb.WriteString(`SELECT "supernodeAccount","validatorAddress","validatorMoniker","currentState","currentStateHeight","ipAddress","p2pPort","protocolVersion","actualVersion","cpuUsagePercent","cpuCores","memoryTotalGb","memoryUsedGb","memoryUsagePercent","storageTotalBytes","storageUsedBytes","storageUsagePercent","hardwareSummary","peersCount","uptimeSeconds",rank,"registeredServices","runningTasks","stateHistory",evidence,"prevIpAddresses","lastStatusCheck","isStatusApiAvailable","metricsReport","lastSuccessfulProbe","failedProbeCounter",COALESCE("lastKnownActualVersion",''),"p2pDbSizeMb","p2pRecords"
 		FROM supernodes`)
 
 	// Legacy CurrentState filter for "running"/"stopped"/"any"
@@ -521,6 +534,8 @@ func listSupernodeMetricsFiltered(ctx context.Context, pool *pgxpool.Pool, f Sup
 			&sn.LastSuccessfulProbe,
 			&sn.FailedProbeCounter,
 			&sn.LastKnownActualVersion,
+			&sn.P2PDbSizeMb,
+			&sn.P2PRecords,
 		); err != nil {
 			return nil, false, err
 		}
@@ -641,6 +656,8 @@ type SupernodeDB struct {
 	LastSuccessfulProbe    *time.Time
 	FailedProbeCounter     int32
 	LastKnownActualVersion string
+	P2PDbSizeMb            *float64
+	P2PRecords             *int64
 }
 
 type SupernodeMetricsFilter struct {
@@ -703,6 +720,8 @@ type SupernodeProbeUpdate struct {
 	PeersCount           *int32
 	UptimeSeconds        *int64
 	Rank                 *int32
+	P2PDbSizeMb          *float64
+	P2PRecords           *int64
 	LastStatusCheck      *time.Time
 	IsStatusAPIAvailable bool
 	MetricsReport        any
@@ -917,8 +936,8 @@ func GetSupernodeByID(ctx context.Context, pool *pgxpool.Pool, supernodeAccount 
 			"prevIpAddresses",
 			"lastStatusCheck","isStatusApiAvailable",
 			"metricsReport",
-			"lastSuccessfulProbe","failedProbeCounter",COALESCE("lastKnownActualVersion",'')
-
+			"lastSuccessfulProbe","failedProbeCounter",COALESCE("lastKnownActualVersion",''),
+			"p2pDbSizeMb","p2pRecords"
 		FROM supernodes
 		WHERE "supernodeAccount" = $1`
 
@@ -956,6 +975,8 @@ func GetSupernodeByID(ctx context.Context, pool *pgxpool.Pool, supernodeAccount 
 		&sn.LastSuccessfulProbe,
 		&sn.FailedProbeCounter,
 		&sn.LastKnownActualVersion,
+		&sn.P2PDbSizeMb,
+		&sn.P2PRecords,
 	)
 	if err != nil {
 		if err.Error() == "no rows in result set" {
@@ -1271,11 +1292,13 @@ func GetActionStatsExtended(ctx context.Context, pool *pgxpool.Pool, filter Acti
 
 // HardwareStats holds aggregated hardware statistics for available supernodes
 type HardwareStats struct {
-	TotalCPUCores       int64 `json:"total_cpu_cores"`
+	TotalCPUCores       int64   `json:"total_cpu_cores"`
 	TotalMemoryGb       float64 `json:"total_memory_gb"`
-	TotalStorageBytes   int64 `json:"total_storage_bytes"`
-	UsedStorageBytes    int64 `json:"used_storage_bytes"`
-	AvailableSupernodes int64 `json:"available_supernodes"`
+	TotalStorageBytes   int64   `json:"total_storage_bytes"`
+	UsedStorageBytes    int64   `json:"used_storage_bytes"`
+	TotalP2PDbSizeMb    float64 `json:"total_p2p_db_size_mb"`
+	TotalP2PRecords     int64   `json:"total_p2p_records"`
+	AvailableSupernodes int64   `json:"available_supernodes"`
 }
 
 // GetAggregatedHardwareStats returns aggregated hardware statistics for fully available supernodes.
@@ -1290,6 +1313,8 @@ func GetAggregatedHardwareStats(ctx context.Context, pool *pgxpool.Pool) (*Hardw
 		COALESCE(SUM("memoryTotalGb"), 0) AS total_memory_gb,
 		COALESCE(SUM("storageTotalBytes"), 0) AS total_storage_bytes,
 		COALESCE(SUM("storageUsedBytes"), 0) AS used_storage_bytes,
+		COALESCE(SUM("p2pDbSizeMb"), 0) AS total_p2p_db_size_mb,
+		COALESCE(SUM("p2pRecords"), 0) AS total_p2p_records,
 		COUNT(*) AS available_supernodes
 	FROM supernodes
 	WHERE "isStatusApiAvailable" = true
@@ -1303,6 +1328,8 @@ func GetAggregatedHardwareStats(ctx context.Context, pool *pgxpool.Pool) (*Hardw
 		&stats.TotalMemoryGb,
 		&stats.TotalStorageBytes,
 		&stats.UsedStorageBytes,
+		&stats.TotalP2PDbSizeMb,
+		&stats.TotalP2PRecords,
 		&stats.AvailableSupernodes,
 	)
 	if err != nil {
