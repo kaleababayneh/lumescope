@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  lumescope:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-18080}:18080"
+      - "5432:5432"
+    environment:
+      - PORT=${PORT:-18080}
+      - CORS_ALLOW_ORIGINS=${CORS_ALLOW_ORIGINS:-*}
+      - READ_HEADER_TIMEOUT=${READ_HEADER_TIMEOUT:-5s}
+      - READ_TIMEOUT=${READ_TIMEOUT:-30s}
+      - WRITE_TIMEOUT=${WRITE_TIMEOUT:-30s}
+      - IDLE_TIMEOUT=${IDLE_TIMEOUT:-120s}
+      - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-10s}
+      - DB_DSN=${DB_DSN:-postgres://postgres:postgres@localhost:5432/lumescope?sslmode=disable}
+      - DB_MAX_CONNS=${DB_MAX_CONNS:-10}
+      - LUMERA_API_BASE=${LUMERA_API_BASE:-https://lcd.testnet.lumera.io}
+      - HTTP_TIMEOUT=${HTTP_TIMEOUT:-10s}
+      - VALIDATORS_SYNC_INTERVAL=${VALIDATORS_SYNC_INTERVAL:-5m}
+      - SUPERNODES_SYNC_INTERVAL=${SUPERNODES_SYNC_INTERVAL:-2m}
+      - ACTIONS_SYNC_INTERVAL=${ACTIONS_SYNC_INTERVAL:-30s}
+      - PROBE_INTERVAL=${PROBE_INTERVAL:-1m}
+      - DIAL_TIMEOUT=${DIAL_TIMEOUT:-2s}
+      - POSTGRES_DB=${POSTGRES_DB:-lumescope}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - lumescope_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:18080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  lumescope_data:
